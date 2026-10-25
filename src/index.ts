@@ -1,47 +1,38 @@
 import joplin from 'api';
 import { MenuItemLocation, ToolbarButtonLocation } from 'api/types';
-import { JournalPanel } from './panel';
-import { adoptMatchingFolder, refreshFolderOptions, registerSettings, SettingKey } from './settings';
+import { StreamPanel } from './panel';
+import { refreshSourceOptions, registerSettings, SettingKey } from './settings';
 
-const COMMAND_TOGGLE = 'journalTimelineToggle';
-const COMMAND_OPEN_TODAY = 'journalTimelineOpenToday';
-const COMMAND_REFRESH = 'journalTimelineRefresh';
+const COMMAND_TOGGLE = 'streamToggle';
+const COMMAND_REFRESH = 'streamRefresh';
 
-const registerCommands = async (panel: JournalPanel) => {
+const registerCommands = async (panel: StreamPanel) => {
 	await joplin.commands.register({
 		name: COMMAND_TOGGLE,
-		label: 'Toggle Journal Timeline',
+		label: 'Toggle Stream Timeline',
 		iconName: 'fas fa-book-open',
 		execute: () => panel.toggle(),
-	});
-
-	await joplin.commands.register({
-		name: COMMAND_OPEN_TODAY,
-		label: 'Open today\'s journal entry',
-		iconName: 'fas fa-pen',
-		execute: () => panel.openEntry(),
 	});
 
 	// The panel keeps itself current, so this has no toolbar button - it is here
 	// for the command palette and for anyone who wants to bind a shortcut.
 	await joplin.commands.register({
 		name: COMMAND_REFRESH,
-		label: 'Refresh Journal Timeline',
+		label: 'Refresh Stream Timeline',
 		iconName: 'fas fa-sync-alt',
 		execute: () => panel.refresh(),
 	});
 
 	await joplin.views.toolbarButtons.create(
-		'journalTimelineToggleButton',
+		'streamToggleButton',
 		COMMAND_TOGGLE,
 		// The third argument is a ToolbarButtonLocation - passing anything else
 		// leaves the button out of the toolbar entirely.
 		ToolbarButtonLocation.NoteToolbar,
 	);
 
-	await joplin.views.menus.create('journalTimelineMenu', 'Journal Timeline', [
+	await joplin.views.menus.create('streamMenu', 'Stream Timeline', [
 		{ commandName: COMMAND_TOGGLE, accelerator: 'CmdOrCtrl+Alt+J' },
-		{ commandName: COMMAND_OPEN_TODAY },
 		{ commandName: COMMAND_REFRESH },
 	], MenuItemLocation.Tools);
 };
@@ -49,14 +40,9 @@ const registerCommands = async (panel: JournalPanel) => {
 joplin.plugins.register({
 	onStart: async () => {
 		await registerSettings();
+		await refreshSourceOptions();
 
-		// Adopt a notebook that already matches the configured name before the
-		// first render, so an existing journal notebook is picked up rather than
-		// the panel offering to create a duplicate.
-		await adoptMatchingFolder();
-		await refreshFolderOptions();
-
-		const panel = new JournalPanel();
+		const panel = new StreamPanel();
 		await panel.create();
 		await registerCommands(panel);
 
@@ -69,7 +55,7 @@ joplin.plugins.register({
 
 		await joplin.settings.onChange(() => {
 			// Only this plugin's settings reach this handler.
-			panel.render().catch(error => console.error('Journal Timeline: refresh after a settings change failed', error));
+			panel.render().catch(error => console.error('Stream Timeline: refresh after a settings change failed', error));
 		});
 
 		// Keeps the timeline in step with notes added, renamed, moved or deleted
@@ -79,7 +65,7 @@ joplin.plugins.register({
 
 		await joplin.workspace.onNoteSelectionChange(() => {
 			// Highlight whichever entry is now open in the editor.
-			panel.syncSelection().catch(error => console.error('Journal Timeline: could not update the selection', error));
+			panel.syncSelection().catch(error => console.error('Stream Timeline: could not update the selection', error));
 
 			// Deleting the selected note changes the selection after the note has already
 			// disappeared from Joplin's note list. onNoteChange() is not guaranteed to

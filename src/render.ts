@@ -1,5 +1,5 @@
 import joplin from 'api';
-import { getNoteContent, StreamEntry } from './journal';
+import { getNoteContent, StreamEntry } from './stream';
 
 /** Matches Joplin's MarkupLanguage enum. */
 const MARKUP_MARKDOWN = 1;
@@ -21,18 +21,6 @@ const remember = (key: string, html: string): string => {
 	return html;
 };
 
-/**
- * Drops a leading "# 2026-08-10" heading. The panel shows the date as the entry
- * heading already, and entries written by older versions of this plugin - or by
- * hand - commonly repeat it as the first line.
- *
- * `title` is interpolated raw because an entry only has a title once it has
- * matched `/^\d{4}-\d{2}-\d{2}$/` in parseJournalTitle: digits and hyphens,
- * nothing a regex reads as syntax. Escape it again if that ever stops holding.
- */
-export const stripRepeatedTitle = (body: string, title: string): string => {
-	return body.replace(new RegExp(`^\\s*#{1,6}\\s+${title}\\s*(?:\\n|$)`), '');
-};
 
 /**
  * Renders one entry's note body to HTML via Joplin's own Markdown renderer.
@@ -49,10 +37,6 @@ const renderEntryBody = async (entry: StreamEntry): Promise<string> => {
 	if (cached !== undefined) return cached;
 
 	const { body, markupLanguage } = await getNoteContent(entry.id);
-	// Stream entries are no longer restricted to YYYY-MM-DD titles. Keep the
-	// complete body until the stream UI decides explicitly how note titles should
-	// be presented; feeding arbitrary titles to the journal-era regex would also
-	// make regexp metacharacters in a normal note title significant.
 	const markup = body.trim();
 	if (!markup) return remember(key, '');
 
@@ -75,7 +59,7 @@ export const renderEntryBodies = async (entries: StreamEntry[]): Promise<Map<str
 		try {
 			rendered.set(entry.id, await renderEntryBody(entry));
 		} catch (error) {
-			console.error(`Journal Timeline: could not render "${entry.title}"`, error);
+			console.error(`Stream Timeline: could not render "${entry.title}"`, error);
 			rendered.set(entry.id, '');
 		}
 	}

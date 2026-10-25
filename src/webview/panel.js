@@ -7,12 +7,12 @@
 (() => {
 	const request = (message) => {
 		if (typeof webviewApi === 'undefined') {
-			console.error('Journal Timeline: webviewApi is unavailable');
+			console.error('Stream Timeline: webviewApi is unavailable');
 			return Promise.resolve(null);
 		}
 
 		return webviewApi.postMessage(message).catch((error) => {
-			console.error('Journal Timeline: the plugin rejected a message', message, error);
+			console.error('Stream Timeline: the plugin rejected a message', message, error);
 			return null;
 		});
 	};
@@ -91,17 +91,6 @@
 			case 'load-more':
 				send({ type: 'loadMore' });
 				break;
-			case 'open-today':
-				send({ type: 'openEntry' });
-				break;
-			case 'pick-date': {
-				// A date input only opens its calendar from its own indicator, which
-				// is not what was clicked - showPicker() is the way to raise it from
-				// a button, and it needs the user activation this handler runs under.
-				const picker = target.parentElement && target.parentElement.querySelector('.jt-pick__input');
-				if (picker && picker.showPicker) picker.showPicker();
-				break;
-			}
 			case 'toggle-bookmark': {
 				event.preventDefault();
 				event.stopPropagation();
@@ -130,11 +119,8 @@
 		}
 	});
 
-	// The picker's value is already YYYY-MM-DD, which is exactly a journal title -
-	// nothing to parse or format. Bound by class rather than data-action so the
-	// checkboxes inside a rendered entry cannot reach this.
-	// Stream stage 4 also routes the top-bar source selector through this stable
-	// document-level handler, so it survives setHtml() just like the old picker.
+	// The top-bar source selector is routed through this stable document-level
+	// handler, so it survives setHtml().
 	document.addEventListener('change', (event) => {
 		const input = event.target;
 
@@ -143,9 +129,6 @@
 			return;
 		}
 
-		if (input instanceof HTMLInputElement && input.classList.contains('jt-pick__input') && input.value) {
-			send({ type: 'openEntry', title: input.value });
-		}
 	});
 
 	// The plugin pushes the editor's note selection here instead of re-rendering,
@@ -198,63 +181,19 @@
 		}
 	}, true); // Capture: scroll events do not bubble.
 
-	// The heading names the year you are reading. Entries crossing the top of the
-	// reader are what counts, so the year changes as that boundary is passed.
-	let yearSpy = null;
-
-	const trackVisibleYear = (root, scroller) => {
-		if (yearSpy) yearSpy.disconnect();
-
-		const heading = root.querySelector('.jt-topbar__title');
-		if (!scroller || !heading) return;
-
-		const atTop = new Set();
-
-		const showTopmostYear = () => {
-			let topmost = null;
-			atTop.forEach((entry) => {
-				if (!topmost || entry.offsetTop < topmost.offsetTop) topmost = entry;
-			});
-
-			// With nothing in the band - in the padding below the last entry, say -
-			// the heading keeps whatever it last showed.
-			if (!topmost) return;
-
-			const year = topmost.getAttribute('data-year');
-			if (year && heading.textContent.trim() !== year) heading.textContent = year;
-		};
-
-		yearSpy = new IntersectionObserver((records) => {
-			for (const record of records) {
-				if (record.isIntersecting) atTop.add(record.target);
-				else atTop.delete(record.target);
-			}
-
-			showTopmostYear();
-		}, {
-			root: scroller,
-			// Narrows the observed region to a band across the top of the reader.
-			rootMargin: '0px 0px -80% 0px',
-		});
-
-		for (const entry of root.querySelectorAll('.jt-entry[data-year]')) yearSpy.observe(entry);
-	};
-
 	// Everything that has to be reapplied after the plugin swaps the content in.
 	let lastScroller = null;
 
 	const onContentReplaced = (root) => {
 		const scroller = root.querySelector('.jt-scroll');
 
-		// Identity only changes on a real re-render. Without this guard, writing
-		// the year into the heading would itself trip the observer and loop.
+		// Identity only changes on a real re-render.
 		if (scroller === lastScroller) return;
 		lastScroller = scroller;
 
 		if (scroller && savedScroll) scroller.scrollTop = savedScroll;
 		restoreExpandedImages(root);
 		applySelection(root);
-		trackVisibleYear(root, scroller);
 	};
 
 	const watchForRerender = () => {

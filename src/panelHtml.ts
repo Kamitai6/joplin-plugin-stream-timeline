@@ -1,11 +1,9 @@
-import { StreamEntry } from './journal';
+import { StreamEntry } from './stream';
 
 export type FolderStatus =
-	/** A notebook is selected and was found. */
+	/** The selected source is available. */
 	| 'ready'
-	/** No notebook selected yet; one will be created on the first entry. */
-	| 'pending'
-	/** A notebook was selected but has since been deleted. */
+	/** A notebook source was selected but has since been deleted. */
 	| 'missing';
 
 export interface StreamSourceOption {
@@ -14,20 +12,15 @@ export interface StreamSourceOption {
 }
 
 export interface PanelState {
-	/** Notebook path, or the name of the notebook still to be created. */
+	/** Label for the selected Stream source. */
 	folderLabel: string;
 	status: FolderStatus;
 	entries: StreamEntry[];
 	/** Rendered note body per entry id. */
 	bodies: Map<string, string>;
-	/** Journal-era state retained while the migration is staged; the Stream UI does not use it. */
-	todayTitle: string;
-	maxEntries: number;
 	truncated: boolean;
 	/** When false, attachments are hidden with CSS - the render cache is untouched. */
 	showImages: boolean;
-	/** Today's date in earlier years, shown above the stream. Empty when off. */
-	onThisDay: StreamEntry[];
 	/**
 	 * Root size in px, from Joplin's editor setting. Every other size in the
 	 * panel is in `em`, so this one value scales the whole reader. 0 leaves the
@@ -61,14 +54,7 @@ const HTML_ESCAPES: Record<string, string> = {
 // scripts.
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, char => HTML_ESCAPES[char]);
 
-/**
- * "Friday, 7 August". No year: the heading tracks the year you are scrolled to,
- * and the note's own title carries the full date in the button's tooltip.
- *
- * Stream stage 2 deliberately replaces that journal-era presentation with the
- * complete user-created date and time on every entry. The time is part of the
- * identity of an entry in a stream: several notes may be created on one day.
- */
+/** Full user-created date and time; several notes may share one day. */
 const formatEntryDateTime = (entry: StreamEntry): string => {
 	const date = new Date(entry.userCreatedTime);
 	const day = date.toLocaleDateString(undefined, {
@@ -156,9 +142,6 @@ const renderStatusNotice = (state: PanelState): string => {
 		return renderNotice('The selected notebook no longer exists. Choose another source above.', ' jt-notice--warn');
 	}
 
-	if (state.status === 'pending') {
-		return renderNotice(`No notebook selected yet. "${state.folderLabel}" is still the journal-era create-on-demand target; choose a Stream source above or in Preferences → Stream Timeline.`, ' jt-notice--warn');
-	}
 
 	if (!state.entries.length) {
 		return renderNotice(state.emptyNotice || 'No notes in this source yet.');
@@ -183,9 +166,8 @@ export const buildPanelHtml = (state: PanelState): string => {
 	`;
 };
 
-// The reader refreshes itself on note, sync, settings and date changes, so the
-// only place a manual retry earns its keep is here, where the last attempt
-// failed.
+// The reader refreshes itself on note, sync and settings changes, so the only
+// place a manual retry earns its keep is here, where the last attempt failed.
 export const buildErrorHtml = (folderLabel: string, message: string): string => `
 	<div class="jt">
 		${renderTopBar('Stream', folderLabel)}
@@ -196,38 +178,3 @@ export const buildErrorHtml = (folderLabel: string, message: string): string => 
 	</div>
 `;
 
-/*
- * Journal-era UI comments retained while this fork is migrated in stages:
- *
- * "12 August 2023", for an "on this day" card. The year leads instead of the
- * weekday: it is the only thing separating that card from today's, which sits
- * right above it under the same day and month. Which weekday it fell on years
- * ago is not why you are reading it.
- *
- * "3 years ago" for an "on this day" card. The date heading deliberately omits
- * the year, so without this the card would read as an undated repeat of today.
- *
- * Today gets a pill so it stays findable now that it has no filled card.
- *
- * Replaces the relative-day badge; "on this day" cards name the gap in years.
- * Replaces the date heading; "on this day" cards carry their year.
- * Whether panel.js's year spy should watch this entry. Off for "on this day"
- * cards: they sit above the stream, so letting them carry data-year would
- * retitle the heading to a year the reader has not scrolled to.
- *
- * The same date in earlier years, rendered in full above the stream.
- * Stand-in card for a day that has no note yet.
- *
- * The heading names the year you are reading, not the range the panel holds -
- * panel.js retargets it as you scroll. This is only the starting value, for
- * the top of the list.
- *
- * Offering to start today's entry against a notebook that has vanished would
- * silently recreate it, so the placeholder is held back.
- *
- * "On this day" is slotted in under today rather than above it. Today is what
- * the panel is for, and leading with a card from years back - headed by the
- * same day and month - reads as though the panel opened on the wrong date.
- * With no note for today the split lands at 0, which puts the section just
- * below the placeholder standing in for it.
- */

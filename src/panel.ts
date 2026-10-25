@@ -1,12 +1,11 @@
 import joplin from 'api';
 import { ViewHandle } from 'api/types';
-import { findOrCreateFolderByPath, findOrCreateJournalNote, findOrCreateTagByTitle, findTagByTitle, getFolderPaths, getTaggedMembershipSnapshot, getTaggedNoteIdsAtOrAfter, listStreamEntries, listTaggedStreamEntries, setNoteTag, StreamEntry, StreamPage } from './journal';
+import { findOrCreateTagByTitle, findTagByTitle, getNotebookPaths, getTaggedMembershipSnapshot, getTaggedNoteIdsAtOrAfter, listStreamEntries, listTaggedStreamEntries, setNoteTag, StreamEntry, StreamPage } from './stream';
 import { buildErrorHtml, buildPanelHtml, buildStreamEntriesHtml, buildStreamFooterHtml, FolderStatus, StreamSourceOption } from './panelHtml';
-import { ALL_FOLDERS, BOOKMARK_TAG_TITLE, BOOKMARKED_SOURCE, CREATE_NEW_FOLDER, getEditorFontSize, getSettings, refreshFolderOptions, setFolderId } from './settings';
+import { ALL_FOLDERS, BOOKMARK_TAG_TITLE, BOOKMARKED_SOURCE, getEditorFontSize, getSettings, refreshSourceOptions, setSourceId } from './settings';
 import { renderEntryBodies } from './render';
-import { parseJournalTitle, todayTitle } from './dates';
 
-const PANEL_ID = 'journalTimelinePanel';
+const PANEL_ID = 'streamPanel';
 
 // Note changes arrive in bursts, especially during sync; coalesce them.
 const REFRESH_DEBOUNCE_MS = 400;
@@ -21,20 +20,13 @@ const BOOKMARK_WATCH_INTERVAL_MS = 1000;
 const MISSING_BOOKMARK_TAG_LOOKUP_INTERVAL_MS = 5000;
 
 interface PanelMessage {
-	type: 'refresh' | 'loadMore' | 'selectSource' | 'toggleBookmark' | 'openEntry' | 'openNote' | 'openLink';
+	type: 'refresh' | 'loadMore' | 'selectSource' | 'toggleBookmark' | 'openNote' | 'openLink';
 	noteId?: string;
 	url?: string;
 	sourceId?: string;
 	bookmarked?: boolean;
-	/** Journal title for openEntry, or absent for today. */
-	title?: string;
 }
 
-interface ResolvedFolder {
-	id: string | null;
-	label: string;
-	status: FolderStatus;
-}
 
 interface ResolvedStreamSource {
 	id: string;
@@ -54,30 +46,13 @@ interface ResolvedSources {
 }
 
 const logError = (context: string) => (error: unknown) => {
-	console.error(`Journal Timeline: ${context}`, error);
-};
-
-/** Works out which notebook the timeline should show, and how to label it. */
-const resolveFolder = async (): Promise<ResolvedFolder> => {
-	const { folderId, newFolderName } = await getSettings();
-
-	// Stage 4 lets the Stream use every notebook. The journal-era "open today's
-	// entry" command still needs one concrete notebook, so All falls back to the
-	// configured create-on-demand path rather than pretending All is a folder id.
-	if (folderId === CREATE_NEW_FOLDER || folderId === ALL_FOLDERS || folderId === BOOKMARKED_SOURCE) return { id: null, label: newFolderName, status: 'pending' };
-
-	// Looked up through the full list rather than by id so the header can show
-	// the same "Parent/Child" path as the settings dropdown.
-	const folder = (await getFolderPaths()).find(candidate => candidate.id === folderId);
-	if (folder) return { id: folder.id, label: folder.path, status: 'ready' };
-
-	return { id: null, label: newFolderName, status: 'missing' };
+	console.error(`Stream Timeline: ${context}`, error);
 };
 
 /** Resolves the Stream source selector into one or more concrete data sources. */
 const resolveSources = async (): Promise<ResolvedSources> => {
-	const { folderId, newFolderName } = await getSettings();
-	const folders = await getFolderPaths();
+	const { sourceId } = await getSettings();
+	const folders = await getNotebookPaths();
 	const folderLabels = new Map(folders.map(folder => [folder.id, folder.path]));
 	const sourceOptions: StreamSourceOption[] = [
 		{ id: ALL_FOLDERS, label: 'All notebooks' },
@@ -85,7 +60,7 @@ const resolveSources = async (): Promise<ResolvedSources> => {
 		...folders.map(folder => ({ id: folder.id, label: folder.path })),
 	];
 
-	if (folderId === ALL_FOLDERS) {
+	if (sourceId === ALL_FOLDERS) {
 		return {
 			sources: folders.map(folder => ({ id: folder.id, kind: 'folder', targetId: folder.id, label: folder.path })),
 			folderLabels,
@@ -97,7 +72,7 @@ const resolveSources = async (): Promise<ResolvedSources> => {
 		};
 	}
 
-	if (folderId === BOOKMARKED_SOURCE) {
+	if (sourceId === BOOKMARKED_SOURCE) {
 		const tag = await findTagByTitle(BOOKMARK_TAG_TITLE);
 		return {
 			sources: tag ? [{ id: BOOKMARKED_SOURCE, kind: 'tag', targetId: tag.id, label: BOOKMARK_TAG_TITLE }] : [],
@@ -110,19 +85,8 @@ const resolveSources = async (): Promise<ResolvedSources> => {
 		};
 	}
 
-	if (folderId === CREATE_NEW_FOLDER) {
-		return {
-			sources: [],
-			folderLabels,
-			label: newFolderName,
-			status: 'pending',
-			selectedSourceId: CREATE_NEW_FOLDER,
-			sourceOptions,
-			sourceKey: CREATE_NEW_FOLDER,
-		};
-	}
 
-	const folder = folders.find(candidate => candidate.id === folderId);
+	const folder = folders.find(candidate => candidate.id === sourceId);
 	if (folder) {
 		return {
 			sources: [{ id: folder.id, kind: 'folder', targetId: folder.id, label: folder.path }],
@@ -137,15 +101,15 @@ const resolveSources = async (): Promise<ResolvedSources> => {
 
 	// A <select> cannot display a selected value that has no option. Keep the
 	// vanished source visible long enough for the user to choose a replacement.
-	sourceOptions.push({ id: folderId, label: '(the selected notebook no longer exists)' });
+	sourceOptions.push({ id: sourceId, label: '(the selected notebook no longer exists)' });
 	return {
 		sources: [],
 		folderLabels,
-		label: newFolderName,
+		label: '(missing notebook)',
 		status: 'missing',
-		selectedSourceId: folderId,
+		selectedSourceId: sourceId,
 		sourceOptions,
-		sourceKey: `missing:${folderId}`,
+		sourceKey: `missing:${sourceId}`,
 	};
 };
 
@@ -169,7 +133,7 @@ const sortStreamEntries = (entries: StreamEntry[]): StreamEntry[] => {
 	return entries.sort((a, b) => b.userCreatedTime - a.userCreatedTime);
 };
 
-export class JournalPanel {
+export class StreamPanel {
 	private handle: ViewHandle;
 
 	// Renders are serialised: two overlapping setHtml() calls would race and the
@@ -233,11 +197,11 @@ export class JournalPanel {
 
 	/**
 	 * Redraws whether or not anything is known to have changed, and rebuilds the
-	 * notebook list with it. Backs the "Refresh Journal Timeline" command and the
+	 * notebook list with it. Backs the "Refresh Stream Timeline" command and the
 	 * retry link shown when a render fails.
 	 */
 	public async refresh(): Promise<void> {
-		await refreshFolderOptions();
+		await refreshSourceOptions();
 		await this.renderNow();
 	}
 
@@ -389,47 +353,13 @@ export class JournalPanel {
 		this.refreshTimer = setTimeout(() => {
 			this.refreshTimer = null;
 
-			refreshFolderOptions()
+			refreshSourceOptions()
 				.catch(logError('could not refresh the notebook list'))
 				.then(() => this.render())
 				.catch(logError('a scheduled refresh failed'));
 		}, REFRESH_DEBOUNCE_MS);
 	}
 
-	/**
-	 * Opens the entry for `title`, writing a new note when that day has none.
-	 * Defaults to today, which is what the toolbar button and the command ask
-	 * for; the date picker names any other day, so an entry missed last week can
-	 * be filled in without hand-titling a note.
-	 */
-	public async openEntry(title: string = todayTitle()): Promise<void> {
-		// The title crosses the webview boundary, so it is checked rather than
-		// trusted - it ends up as a note title, and "2026-02-31" is not a day.
-		if (!parseJournalTitle(title)) return;
-
-		// The panel already renders from resolveFolder, and it answers exactly what
-		// is needed here: an id when the notebook exists, otherwise the name to
-		// create it under. Asking it again keeps the two from disagreeing about
-		// which notebook the journal lives in.
-		const settings = await getSettings();
-		const resolved = await resolveFolder();
-		let folderId = resolved.id;
-
-		if (!folderId) {
-			// Creating the notebook is what turns the "create a new notebook" choice
-			// into a real selection, so the dropdown is pointed at it straight away.
-			folderId = (await findOrCreateFolderByPath(resolved.label)).id;
-			// When the Stream is explicitly showing All notebooks, the legacy journal
-			// command may create its Journals notebook without changing the Stream
-			// source out from under the reader.
-			if (settings.folderId !== ALL_FOLDERS && settings.folderId !== BOOKMARKED_SOURCE) await setFolderId(folderId);
-			await refreshFolderOptions();
-		}
-
-		const noteId = await findOrCreateJournalNote(folderId, title.trim());
-		await joplin.commands.execute('openNote', noteId);
-		await this.render();
-	}
 
 	/** Loads only the next stream page and appends it to the existing webview DOM. */
 	public async loadMore(): Promise<void> {
@@ -493,10 +423,10 @@ export class JournalPanel {
 	}
 
 	private async selectSource(sourceId: string): Promise<void> {
-		const folders = await getFolderPaths();
+		const folders = await getNotebookPaths();
 		if (sourceId !== ALL_FOLDERS && sourceId !== BOOKMARKED_SOURCE && !folders.some(folder => folder.id === sourceId)) return;
 
-		await setFolderId(sourceId);
+		await setSourceId(sourceId);
 		this.loadedPages = 1;
 		await this.renderNow();
 	}
@@ -586,11 +516,8 @@ export class JournalPanel {
 				status: resolved.status,
 				entries,
 				bodies: await renderEntryBodies(entries),
-				todayTitle: todayTitle(),
-				maxEntries: limit,
 				truncated: this.hasMore,
 				showImages,
-				onThisDay: [],
 				fontSize: await getEditorFontSize(),
 				selectedNoteIds: this.selectionSeen ? await joplin.workspace.selectedNoteIds() : [],
 				bookmarkedNoteIds,
@@ -622,9 +549,6 @@ export class JournalPanel {
 				await this.selectSource(message.sourceId);
 			} else if (message.type === 'toggleBookmark' && message.noteId && typeof message.bookmarked === 'boolean') {
 				return await this.toggleBookmark(message.noteId, message.bookmarked);
-			} else if (message.type === 'openEntry') {
-				// Undefined for the today button, which is what openEntry defaults to.
-				await this.openEntry(message.title);
 			} else if (message.type === 'openNote' && message.noteId) {
 				await joplin.commands.execute('openNote', message.noteId);
 			} else if (message.type === 'openLink' && message.url) {

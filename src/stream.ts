@@ -27,8 +27,6 @@ export interface StreamEntry {
 	sourceFolderLabel?: string;
 	/** The timeline position is fixed by Joplin's user_created_time. */
 	userCreatedTime: number;
-	/** Kept as a Date while the existing journal-oriented panel is still in use. */
-	date: Date;
 	/** Part of the render cache key, so an edited entry is re-rendered. */
 	updatedTime: number;
 }
@@ -65,7 +63,7 @@ const getAll = async <T>(path: string[], query: Record<string, unknown> = {}): P
 	return items;
 };
 
-export interface FolderPath {
+export interface NotebookPath {
 	id: string;
 	/** Full "Parent/Child" path, used as the dropdown label. */
 	path: string;
@@ -174,7 +172,7 @@ export const getTaggedNoteIdsAtOrAfter = async (tagId: string, oldestUserCreated
 	return noteIds;
 };
 
-const buildFolderPath = (folder: Folder, byId: Map<string, Folder>): string => {
+const buildNotebookPath = (folder: Folder, byId: Map<string, Folder>): string => {
 	const parts = [folder.title];
 	const visited = new Set([folder.id]);
 	let current = folder;
@@ -190,88 +188,16 @@ const buildFolderPath = (folder: Folder, byId: Map<string, Folder>): string => {
 };
 
 /** Every notebook with its full path, sorted by path. */
-export const getFolderPaths = async (): Promise<FolderPath[]> => {
+export const getNotebookPaths = async (): Promise<NotebookPath[]> => {
 	const folders = await getFolders();
 	const byId = new Map(folders.map(folder => [folder.id, folder]));
 
 	return folders
-		.map(folder => ({ id: folder.id, path: buildFolderPath(folder, byId) }))
+		.map(folder => ({ id: folder.id, path: buildNotebookPath(folder, byId) }))
 		.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
 };
 
-const splitFolderPath = (folderPath: string): string[] => {
-	return folderPath.split('/').map(segment => segment.trim()).filter(Boolean);
-};
 
-/**
- * Notebook titles are matched case-insensitively but otherwise exactly, so
- * "Journals" and "journals" are the same notebook while "My Journal" and
- * "My-Journal" stay distinct.
- */
-const findChild = (folders: Folder[], parentId: string, title: string): Folder | undefined => {
-	const wanted = title.toLowerCase();
-	return folders.find(folder => (folder.parent_id || '') === parentId && folder.title.trim().toLowerCase() === wanted);
-};
-
-/**
- * Walks a "Parent/Child" path segment by segment. With `create`, the notebooks
- * missing along the way are made as it goes; without it, the first gap ends the
- * walk. An empty path has no notebook to reach, so it is null either way.
- */
-const walkFolderPath = async (folderPath: string, create: boolean): Promise<Folder | null> => {
-	const segments = splitFolderPath(folderPath);
-	if (!segments.length) return null;
-
-	const folders = await getFolders();
-	let parentId = '';
-	let current: Folder | null = null;
-
-	for (const segment of segments) {
-		current = findChild(folders, parentId, segment) ?? null;
-
-		if (!current) {
-			if (!create) return null;
-
-			const body = parentId ? { title: segment, parent_id: parentId } : { title: segment };
-			current = await joplin.data.post(['folders'], null, body) as Folder;
-			folders.push(current);
-		}
-
-		parentId = current.id;
-	}
-
-	return current;
-};
-
-/** Resolves a "Parent/Child" path to a notebook, or null when it does not exist. */
-export const findFolderByPath = (folderPath: string): Promise<Folder | null> => walkFolderPath(folderPath, false);
-
-/**
- * Like `findFolderByPath`, but creates the missing notebooks along the path.
- * Only called when the user asks for a note to be created - rendering the panel
- * must never create notebooks as a side effect.
- */
-export const findOrCreateFolderByPath = async (folderPath: string): Promise<Folder> => {
-	const folder = await walkFolderPath(folderPath, true);
-
-	// Creating cannot fail to find a notebook, so this is the empty path.
-	if (!folder) throw new Error('The journal notebook path is empty.');
-
-	return folder;
-};
-
-/*
- * Journal-era listing notes retained while this fork is migrated in stages:
- * Dated notes in the notebook before `maxEntries` was applied.
- * Today's month and day in earlier years, most recent first.
- * Every note in the notebook whose title is a valid date, most recent first.
- * Taken from the full list rather than the slice: last year's entry is almost
- * never among the most recent `maxEntries`. This costs no extra request - every
- * dated note has already been listed above.
- *
- * The stream path below intentionally replaces those rules with one paged,
- * user_created_time-ordered source.
- */
 export interface StreamPage {
 	entries: StreamEntry[];
 	/** Whether Joplin reports another page after this one. */
@@ -282,14 +208,13 @@ export interface StreamPage {
 
 /**
  * Reads one page of notes from a notebook, newest user-created timestamp first.
- * The old journal listing filtered dated titles after fetching the whole
- * notebook; the stream deliberately leaves every note eligible and lets Joplin
- * do the ordering and pagination before anything reaches the panel.
+ * Every note is eligible; Joplin performs the ordering and pagination before
+ * anything reaches the panel.
  */
 export const listStreamEntries = async (folderId: string, page: number, limit: number, sourceFolderLabel = ''): Promise<StreamPage> => {
 	const safePage = Math.max(1, Math.floor(page) || 1);
-	// `0` used to mean "render every journal entry". A stream never expands the
-	// whole notebook at once, so it maps to the largest page the data API allows.
+	// A stream never expands the whole notebook at once, so 0 maps to the
+	// largest page the data API allows.
 	const safeLimit = limit > 0 ? Math.min(Math.floor(limit), PAGE_LIMIT) : PAGE_LIMIT;
 
 	// Bodies are deliberately not requested here: only the entries that end up
@@ -311,7 +236,6 @@ export const listStreamEntries = async (folderId: string, page: number, limit: n
 			sourceFolderId: folderId,
 			sourceFolderLabel: sourceFolderLabel || undefined,
 			userCreatedTime,
-			date: new Date(userCreatedTime),
 			updatedTime: Number(note.updated_time) || 0,
 		};
 	});
@@ -358,7 +282,6 @@ export const listTaggedStreamEntries = async (
 			sourceFolderId: note.parent_id || undefined,
 			sourceFolderLabel: folderLabel,
 			userCreatedTime,
-			date: new Date(userCreatedTime),
 			updatedTime: Number(note.updated_time) || 0,
 		};
 	});
@@ -371,25 +294,6 @@ export const listTaggedStreamEntries = async (
 	};
 };
 
-/**
- * Returns the id of the note titled `title` in the given notebook, creating the
- * note when it is missing.
- */
-export const findOrCreateJournalNote = async (folderId: string, title: string): Promise<string> => {
-	const notes = await getAll<Note>(['folders', folderId, 'notes'], { fields: ['id', 'title'] });
-	const existing = notes.find(note => note.title.trim() === title);
-	if (existing) return existing.id;
-
-	// Created empty: the panel already shows the date as the entry heading, so a
-	// "# 2026-08-10" body would just repeat it.
-	const created = await joplin.data.post(['notes'], null, {
-		title,
-		parent_id: folderId,
-		body: '',
-	}) as Note;
-
-	return created.id;
-};
 
 export const getNoteContent = async (noteId: string): Promise<NoteContent> => {
 	const note = await joplin.data.get(['notes', noteId], { fields: ['body', 'markup_language'] });

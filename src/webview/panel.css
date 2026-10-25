@@ -83,46 +83,8 @@
 	justify-content: flex-end;
 }
 
-.jt-icon-button {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 30px;
-	height: 30px;
-	font-size: 0.95em;
-	color: var(--joplin-color-faded, #7c8394);
-	cursor: pointer;
-	background: transparent;
-	border: none;
-	border-radius: 5px;
-}
 
-/*
- * The date picker is the button; the input exists only to own the native
- * calendar, raised through showPicker(). Kept rendered and anchored under the
- * button so the popup lands there - display:none would have nothing to open.
- */
-.jt-pick {
-	position: relative;
-	display: inline-flex;
-}
 
-.jt-pick__input {
-	position: absolute;
-	bottom: 0;
-	left: 0;
-	width: 1px;
-	height: 1px;
-	padding: 0;
-	border: none;
-	opacity: 0;
-	pointer-events: none;
-}
-
-.jt-icon-button:hover {
-	color: var(--joplin-color, #32373f);
-	background: var(--joplin-background-color-hover3, rgba(128, 128, 128, 0.15));
-}
 
 /* Entry stream */
 
@@ -150,8 +112,7 @@
 
 /* The hover highlight already announces the entry as a target, so the cursor
    has to agree with it - a row that lights up under a text caret reads as
-   broken. Only the entries that actually open a note qualify: the "start
-   today's entry" placeholder is inert apart from its button. */
+   broken. */
 .jt-entry[data-note-id] {
 	cursor: pointer;
 }
@@ -250,26 +211,8 @@
 	color: var(--joplin-url-color, #155bda);
 }
 
-.jt-entry__date--plain {
-	cursor: default;
-}
 
-.jt-entry__badge {
-	font-size: 0.85em;
-	color: var(--joplin-color-faded, #7c8394);
-}
 
-/*
- * Today is marked by its badge alone. It used to get a raised card, but that
- * reads as "highlighted" and competed with the selection below - two filled
- * blocks, neither obviously the one you are looking at.
- */
-.jt-entry__badge--today {
-	padding: 1px 8px;
-	color: var(--joplin-url-color, #155bda);
-	border: 1px solid currentColor;
-	border-radius: 99px;
-}
 
 /* The entry open in the editor: the reader's only filled highlight. */
 .jt-entry--selected {
@@ -281,46 +224,7 @@
 	border-left: 3px solid var(--joplin-url-color, #155bda);
 }
 
-/*
- * "On this day": the same date in earlier years, tucked under today rather than
- * over it. The tint is what marks it as an aside instead of a third entry in
- * the stream, and the cap keeps a long past entry from burying yesterday - the
- * section is a glance backwards, not the thing you came to read.
- */
-.jt-onthisday {
-	max-height: 45vh;
-	padding: 12px var(--jt-gutter) 8px;
-	margin: 12px calc(-1 * var(--jt-gutter)) 18px;
-	overflow-y: auto;
-	/* Deliberately not --joplin-raised-background-color: that is the selected
-	   entry's fill, so a block wearing it reads as "this one is open". A plain
-	   neutral wash belongs to no interactive state, and works on either theme. */
-	background: rgba(128, 128, 128, 0.08);
-	border-radius: 8px;
-}
 
-.jt-onthisday__title {
-	margin: 0;
-	font-size: 0.72em;
-	font-weight: 600;
-	letter-spacing: 0.07em;
-	color: var(--joplin-color-faded, #7c8394);
-	text-transform: uppercase;
-}
-
-/* The cards' own top padding is sized for the stream, where entries need air
-   between them; inside the section it only pushes the first one off its title. */
-.jt-onthisday .jt-entry {
-	padding-top: 10px;
-}
-
-/* The "start today's entry" card, which has no note to select yet. */
-.jt-entry--placeholder {
-	padding: 12px var(--jt-gutter) 10px;
-	margin: 16px calc(-1 * var(--jt-gutter)) 0;
-	border: 1px dashed var(--joplin-divider-color, #dddddd);
-	border-radius: 8px;
-}
 
 .jt-entry__empty {
 	margin: 0 0 4px;
@@ -338,28 +242,9 @@
 	text-decoration: underline;
 }
 
-.jt-start {
-	display: inline-flex;
-	gap: 8px;
-	align-items: center;
-	padding: 8px 14px;
-	margin-bottom: 6px;
-	font: inherit;
-	color: var(--joplin-color, #32373f);
-	cursor: pointer;
-	background: var(--joplin-background-color, #ffffff);
-	border: 1px solid var(--joplin-divider-color, #dddddd);
-	border-radius: 6px;
-}
 
-.jt-start:hover {
-	background: var(--joplin-background-color-hover3, rgba(128, 128, 128, 0.15));
-}
-
-.jt-icon-button:focus-visible,
 .jt-entry__bookmark:focus-visible,
 .jt-entry__date:focus-visible,
-.jt-start:focus-visible,
 .jt-link:focus-visible {
 	outline: 2px solid var(--joplin-url-color, #155bda);
 	outline-offset: 2px;
