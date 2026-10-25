@@ -1,34 +1,24 @@
-# Journal Timeline
+# Stream Timeline
 
-A [Joplin](https://joplinapp.org) plugin that reads your dated journal notes as a continuous
-timeline, and opens - or creates - today's entry in one click.
+A [Joplin](https://joplinapp.org) plugin that streams ordinary notes from one or more notebooks into a continuous, newest-first timeline.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/xFuture603/joplin-plugin-journal-timeline/main/docs/journal_timeline_view.png" alt="Journal Timeline panel open in Joplin">
-</p>
-
-Any note whose **title is a calendar date** (`YYYY-MM-DD`, e.g. `2026-08-10`) is treated as a
-journal entry. Notes with other titles are ignored, so the notebook can hold indexes, templates
-and other material alongside the journal itself.
+Unlike the original Journal Timeline plugin, notes do **not** need date-formatted titles. Every note is eligible, and chronological order is based on Joplin's `user_created_time`, so editing an old note does not move it to the top of the stream.
 
 ## Features
 
-- Reads as a continuous journal: each entry shows its date as a heading - "Friday, 7 August" -
-  followed by the note itself, rendered exactly as Joplin renders it. The heading at the top of the
-  panel names the year you are scrolled to.
-- Today is badged at the top of the list. If today's entry does not exist yet, a card offers to
-  start it.
-- Clicking anywhere in an entry opens that note in the editor, and whichever entry is open is
-  highlighted - starting from nothing, so the panel opens without an entry already picked out.
-  Selecting text and following links work as you would expect.
-- Attachments appear as thumbnails so a photo cannot swallow an entry. Click one to expand it, or
-  switch images off entirely.
-- **On this day** shows what you wrote on this date in earlier years, in full, above the timeline -
-  every past year at once, not just last year. It only appears when there is something to show.
-- Missed a day? Pick it from the date button and the entry is created for you, correctly titled -
-  no hand-naming a note `2026-08-11` to make it show up.
-- Keeps itself up to date as notes are created, edited, moved, deleted or synced - without losing
-  your place.
+- Shows ordinary Joplin notes as a continuous timeline, rendered with Joplin's own Markdown/HTML renderer.
+- Switches directly from the panel between:
+  - **All notebooks** — merges notes from every notebook into one chronological stream.
+  - **Bookmarked** — shows notes carrying the normal Joplin `Bookmarked` tag.
+  - **Any individual notebook** — shows only notes from that notebook.
+- Orders entries by `user_created_time` (newest first). Editing a note updates its rendered content without changing its chronological position.
+- Loads incrementally with **Load more** instead of expanding the entire history into the DOM at once.
+- Shows the original notebook beside an entry when notes from multiple notebooks are mixed.
+- Clicking anywhere in an entry opens that note in the editor. The currently selected note is highlighted.
+- Renders attachments as thumbnails; click an image to expand or shrink it, or hide images from the plugin settings.
+- Adds a bookmark button to each entry. Bookmarking uses a normal Joplin tag named `Bookmarked`, so the bookmark state remains part of your Joplin data and syncs normally.
+- Reflects bookmark membership changes automatically while the Bookmarked source is visible, using a lightweight ID-only check.
+- Keeps the timeline current when notes change, are deleted, or finish syncing without resetting the reader to the top.
 
 ## Requirements
 
@@ -36,56 +26,102 @@ Joplin **3.2 or newer**, desktop only.
 
 ## Installation
 
-Search for **Journal Timeline** in _Joplin → Preferences → Plugins_ and click Install.
+### Install a release `.jpl`
+
+1. Download the `.jpl` package from the repository's [Releases](https://github.com/Kamitai6/joplin-plugin-stream-timeline/releases) page.
+2. Open the normal Joplin desktop application.
+3. Open **Tools → Options → Plugins**.
+4. Open the plugin menu (gear icon) and choose **Install from file**.
+5. Select the downloaded `.jpl` file.
+6. Restart Joplin completely.
+
+After restart, **Stream Timeline** should appear in the installed plugin list and its panel can be shown from the toolbar or **Tools → Stream Timeline**.
+
+> **Important when switching from development to the installed plugin:**
+> If this repository is still registered under **Tools → Options → Plugins → Show Advanced Settings → Development plugins**, remove that development-plugin path before testing the installed `.jpl`, then restart Joplin. Otherwise Joplin can continue to run the source tree as a development plugin and open a detached plugin Developer Tools window at startup.
+
+### Build and install locally
+
+Install dependencies and build the distribution archive from the repository root:
+
+```bash
+npm ci
+npm run dist
+```
+
+The generated `.jpl` file is placed in `publish/`. Install that file with the same **Plugins → Install from file** procedure described above, then restart Joplin.
+
+If `package.json` was changed and only `package-lock.json` needs to be synchronised before the build, run:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+```
+
+### Development mode
+
+For development, add the repository root to Joplin's **Development plugins** setting and run Joplin with a separate development profile. On Windows, for example:
+
+```powershell
+& "C:\Program Files\Joplin\Joplin.exe" --env dev
+```
+
+A development plugin is intentionally treated differently from an installed `.jpl`; Joplin may open a detached Developer Tools window for the plugin. This does not mean the normal Joplin profile itself is running in development mode.
+
+When returning to normal use, remove the repository path from **Development plugins** in the normal Joplin profile and install the built `.jpl` instead.
 
 ## Usage
 
-The panel appears in the sidebar the first time the plugin runs, and afterwards remembers whether
-you left it open or closed.
+The panel appears the first time the plugin runs and afterwards remembers whether you left it open or closed.
 
-| Action                      | Where                                                                  |
-| --------------------------- | ---------------------------------------------------------------------- |
-| Show or hide the panel      | Toolbar button, _Tools → Journal Timeline_, or `Ctrl/Cmd+Alt+J`        |
-| Open today's entry          | The pen button, or _Tools → Journal Timeline_                          |
-| Open any other day          | The calendar button - picks a day and writes the entry if it has none  |
-| Open an entry in the editor | Click anywhere in it                                                   |
-| Follow a link in an entry   | Click the link - notes open in Joplin, everything else in your browser |
-| Expand or shrink an image   | Click the image                                                        |
+| Action | Where |
+| --- | --- |
+| Choose the stream source | Source selector at the top-left of the panel |
+| Show or hide the panel | Toolbar button, _Tools → Stream Timeline_, or `Ctrl/Cmd+Alt+J` |
+| Open a note in the editor | Click anywhere in its entry |
+| Bookmark or unbookmark a note | Bookmark button at the right side of the entry header |
+| Load older notes | **Load more** at the bottom of the stream |
+| Follow a link in an entry | Click the link; note links open in Joplin and other links use the system handler |
+| Expand or shrink an image | Click the image |
 
-The panel is narrow by default. Drag its edge, or use _View → Change application layout_, to give
-the reader a comfortable width.
+The panel can be resized or moved with Joplin's normal layout controls.
 
-There is no refresh button: the timeline updates itself whenever your notes change, a sync
-finishes, or the date rolls over at midnight.
+## Sources
+
+### All notebooks
+
+Merges notes from every notebook and orders the combined result by `user_created_time`.
+
+### Individual notebook
+
+Shows only notes from the selected notebook.
+
+### Bookmarked
+
+Shows notes tagged `Bookmarked`. The bookmark button creates this tag automatically the first time it is needed.
+
+Because the bookmark is a standard Joplin tag rather than plugin-local state, it is visible to Joplin itself and participates in normal sync.
 
 ## Settings
 
-_Preferences → Journal Timeline_
+_Preferences → Stream Timeline_
 
-| Setting                   | Default              | What it does                                                                                                               |
-| ------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Journal notebook          | _(create a new one)_ | Choose the notebook your journal lives in, from a list of every notebook you have.                                         |
-| Name for the new notebook | `Journals`           | Only used while the setting above is on **+ Create a new notebook…**. Use `/` to nest it, e.g. `Journals/Personal`.        |
-| Entries shown             | `30`                 | How many recent entries to show, up to 365. Each is rendered in full, so higher values are slower. `0` shows everything.   |
-| Show images in entries    | on                   | Turn off to hide attachments in the panel. Your notes are not changed - images still appear in the editor and note viewer. |
-| Show "On this day"        | on                   | Puts today's date in earlier years above the timeline. Only appears on days you have written about before.                |
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Stream source | `All notebooks` | Choose one notebook, merge every notebook, or show the `Bookmarked` tag source. |
+| Entries per page | `30` | Number of entries loaded at a time, up to 100. `0` uses the maximum page size of 100. |
+| Show images in entries | on | Hide attached images in the timeline without changing the notes themselves. |
 
-### Using a journal you already have
+The source can also be changed directly from the selector in the panel; the selection is persisted in the plugin setting.
 
-If you already keep a notebook called `Journals`, the plugin adopts it the first time it runs
-rather than creating a second one - your existing entries simply appear, with nothing to set up.
+## Chronology and performance
 
-To use a notebook under a different name, pick it from the **Journal notebook** list.
+Stream Timeline deliberately uses `user_created_time` rather than `updated_time` for ordering. This keeps the timeline stable when old notes are edited.
 
-### Starting a new journal
+Only the current page is rendered initially. Older entries are fetched and appended when **Load more** is pressed, which avoids building a very large DOM for long-running note archives.
 
-Leave **Journal notebook** on _Create a new notebook_ and set the name you want. The notebook is
-created the first time you add an entry, never merely by opening the panel - so you can change your
-mind without leaving an empty notebook behind. Once created, the setting switches to it
-automatically.
+## Credits
 
-The setting remembers the notebook itself rather than its name, so renaming or moving your journal
-will not break it.
+Stream Timeline is a fork of [Journal Timeline](https://github.com/xFuture603/joplin-plugin-journal-timeline) by xFuture603. Version 1.5.1 changes the journal-specific reader into a general-purpose note stream while retaining the original project's foundation.
 
 ## License
 

@@ -5,15 +5,27 @@
 // stop working after the first refresh.
 
 (() => {
-	const send = (message) => {
+	const request = (message) => {
 		if (typeof webviewApi === 'undefined') {
-			console.error('Journal Timeline: webviewApi is unavailable');
-			return;
+			console.error('Stream Timeline: webviewApi is unavailable');
+			return Promise.resolve(null);
 		}
 
-		webviewApi.postMessage(message).catch((error) => {
-			console.error('Journal Timeline: the plugin rejected a message', message, error);
+		return webviewApi.postMessage(message).catch((error) => {
+			console.error('Stream Timeline: the plugin rejected a message', message, error);
+			return null;
 		});
+	};
+
+	const send = (message) => {
+		request(message);
+	};
+
+	const setBookmarkButtonState = (button, bookmarked) => {
+		button.classList.toggle('is-bookmarked', bookmarked);
+		button.setAttribute('aria-pressed', bookmarked ? 'true' : 'false');
+		button.setAttribute('aria-label', bookmarked ? 'Remove bookmark' : 'Add bookmark');
+		button.setAttribute('title', bookmarked ? 'Remove bookmark' : 'Add bookmark');
 	};
 
 	// Attachments render as thumbnails; clicking one toggles it to full width.
@@ -76,15 +88,26 @@
 			case 'refresh':
 				send({ type: 'refresh' });
 				break;
-			case 'open-today':
-				send({ type: 'openEntry' });
+			case 'load-more':
+				send({ type: 'loadMore' });
 				break;
-			case 'pick-date': {
-				// A date input only opens its calendar from its own indicator, which
-				// is not what was clicked - showPicker() is the way to raise it from
-				// a button, and it needs the user activation this handler runs under.
-				const picker = target.parentElement && target.parentElement.querySelector('.jt-pick__input');
-				if (picker && picker.showPicker) picker.showPicker();
+			case 'toggle-bookmark': {
+				event.preventDefault();
+				event.stopPropagation();
+
+				const noteId = target.getAttribute('data-note-id');
+				if (!noteId || !(target instanceof HTMLButtonElement) || target.disabled) return;
+
+				const previous = target.getAttribute('aria-pressed') === 'true';
+				const next = !previous;
+				setBookmarkButtonState(target, next);
+				target.disabled = true;
+
+				request({ type: 'toggleBookmark', noteId, bookmarked: next }).then((response) => {
+					const accepted = response && response.ok === true;
+					setBookmarkButtonState(target, accepted ? response.bookmarked === true : previous);
+					target.disabled = false;
+				});
 				break;
 			}
 			case 'open-note':
@@ -96,14 +119,16 @@
 		}
 	});
 
-	// The picker's value is already YYYY-MM-DD, which is exactly a journal title -
-	// nothing to parse or format. Bound by class rather than data-action so the
-	// checkboxes inside a rendered entry cannot reach this.
+	// The top-bar source selector is routed through this stable document-level
+	// handler, so it survives setHtml().
 	document.addEventListener('change', (event) => {
 		const input = event.target;
-		if (input instanceof HTMLInputElement && input.classList.contains('jt-pick__input') && input.value) {
-			send({ type: 'openEntry', title: input.value });
+
+		if (input instanceof HTMLSelectElement && input.classList.contains('jt-topbar__source') && input.value) {
+			send({ type: 'selectSource', sourceId: input.value });
+			return;
 		}
+
 	});
 
 	// The plugin pushes the editor's note selection here instead of re-rendering,
@@ -123,10 +148,24 @@
 	if (typeof webviewApi !== 'undefined') {
 		webviewApi.onMessage((event) => {
 			const message = event && event.message;
-			if (!message || message.type !== 'selection') return;
+			if (!message) return;
 
-			selectedNoteIds = message.noteIds || [];
-			applySelection(document);
+			if (message.type === 'selection') {
+				selectedNoteIds = message.noteIds || [];
+				applySelection(document);
+			} else if (message.type === 'appendEntries') {
+				const stream = document.querySelector('.jt-stream');
+				const footer = document.querySelector('.jt-stream-footer');
+
+				if (stream && message.entriesHtml) stream.insertAdjacentHTML('beforeend', message.entriesHtml);
+				if (footer) footer.innerHTML = message.footerHtml || '';
+
+				// Appending does not replace the scroller, so MutationObserver's
+				// re-render path intentionally ignores it. Apply the two DOM-only states
+				// that new entries still need here instead.
+				restoreExpandedImages(document);
+				applySelection(document);
+			}
 		});
 	}
 
@@ -142,63 +181,19 @@
 		}
 	}, true); // Capture: scroll events do not bubble.
 
-	// The heading names the year you are reading. Entries crossing the top of the
-	// reader are what counts, so the year changes as that boundary is passed.
-	let yearSpy = null;
-
-	const trackVisibleYear = (root, scroller) => {
-		if (yearSpy) yearSpy.disconnect();
-
-		const heading = root.querySelector('.jt-topbar__title');
-		if (!scroller || !heading) return;
-
-		const atTop = new Set();
-
-		const showTopmostYear = () => {
-			let topmost = null;
-			atTop.forEach((entry) => {
-				if (!topmost || entry.offsetTop < topmost.offsetTop) topmost = entry;
-			});
-
-			// With nothing in the band - in the padding below the last entry, say -
-			// the heading keeps whatever it last showed.
-			if (!topmost) return;
-
-			const year = topmost.getAttribute('data-year');
-			if (year && heading.textContent.trim() !== year) heading.textContent = year;
-		};
-
-		yearSpy = new IntersectionObserver((records) => {
-			for (const record of records) {
-				if (record.isIntersecting) atTop.add(record.target);
-				else atTop.delete(record.target);
-			}
-
-			showTopmostYear();
-		}, {
-			root: scroller,
-			// Narrows the observed region to a band across the top of the reader.
-			rootMargin: '0px 0px -80% 0px',
-		});
-
-		for (const entry of root.querySelectorAll('.jt-entry[data-year]')) yearSpy.observe(entry);
-	};
-
 	// Everything that has to be reapplied after the plugin swaps the content in.
 	let lastScroller = null;
 
 	const onContentReplaced = (root) => {
 		const scroller = root.querySelector('.jt-scroll');
 
-		// Identity only changes on a real re-render. Without this guard, writing
-		// the year into the heading would itself trip the observer and loop.
+		// Identity only changes on a real re-render.
 		if (scroller === lastScroller) return;
 		lastScroller = scroller;
 
 		if (scroller && savedScroll) scroller.scrollTop = savedScroll;
 		restoreExpandedImages(root);
 		applySelection(root);
-		trackVisibleYear(root, scroller);
 	};
 
 	const watchForRerender = () => {

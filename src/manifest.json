@@ -1,14 +1,27 @@
 {
   "manifest_version": 1,
-  "id": "com.github.xfuture603.journal-timeline",
+  "id": "com.github.kamitai6.stream-timeline",
   "app_min_version": "3.2",
-  "version": "1.4.0",
-  "name": "Journal Timeline",
-  "description": "Reads your dated journal notes as a continuous timeline, and opens or creates today's entry in one click.",
-  "author": "xFuture",
-  "homepage_url": "https://github.com/xFuture603/joplin-plugin-journal-timeline",
-  "repository_url": "https://github.com/xFuture603/joplin-plugin-journal-timeline",
-  "platforms": ["desktop"],
-  "keywords": ["journal", "diary", "timeline", "daily notes"],
-  "categories": ["productivity", "viewer"]
+  "version": "1.5.1",
+  "name": "Stream Timeline",
+  "description": "Streams notes from one or more notebooks into a continuous timeline with incremental loading and bookmarks.",
+  "author": "Kamitai6",
+  "homepage_url": "https://github.com/Kamitai6/joplin-plugin-stream-timeline",
+  "repository_url": "https://github.com/Kamitai6/joplin-plugin-stream-timeline",
+  "platforms": [
+    "desktop"
+  ],
+  "keywords": [
+    "timeline",
+    "stream",
+    "notes",
+    "bookmarks",
+    "tags"
+  ],
+  "categories": [
+    "productivity",
+    "personal knowledge management",
+    "viewer",
+    "tags"
+  ]
 }

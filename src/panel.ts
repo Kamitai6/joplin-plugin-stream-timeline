@@ -1,56 +1,139 @@
 import joplin from 'api';
 import { ViewHandle } from 'api/types';
-import { findOrCreateFolderByPath, findOrCreateJournalNote, getFolderPaths, listJournalEntries } from './journal';
-import { buildErrorHtml, buildPanelHtml, FolderStatus } from './panelHtml';
-import { CREATE_NEW_FOLDER, getEditorFontSize, getSettings, refreshFolderOptions, setFolderId } from './settings';
+import { findOrCreateTagByTitle, findTagByTitle, getNotebookPaths, getTaggedMembershipSnapshot, getTaggedNoteIdsAtOrAfter, listStreamEntries, listTaggedStreamEntries, setNoteTag, StreamEntry, StreamPage } from './stream';
+import { buildErrorHtml, buildPanelHtml, buildStreamEntriesHtml, buildStreamFooterHtml, FolderStatus, StreamSourceOption } from './panelHtml';
+import { ALL_FOLDERS, BOOKMARK_TAG_TITLE, BOOKMARKED_SOURCE, getEditorFontSize, getSettings, refreshSourceOptions, setSourceId } from './settings';
 import { renderEntryBodies } from './render';
-import { parseJournalTitle, todayTitle } from './dates';
 
-const PANEL_ID = 'journalTimelinePanel';
+const PANEL_ID = 'streamPanel';
 
 // Note changes arrive in bursts, especially during sync; coalesce them.
 const REFRESH_DEBOUNCE_MS = 400;
 
-// Which day is "today" is decided while rendering, so a panel left open
-// overnight would keep badging yesterday as today and offer to create an entry
-// for a day that has passed. Polling beats scheduling a timer for midnight: it
-// also copes with the machine being suspended and with the clock or time zone
-// being changed.
-const DAY_WATCH_INTERVAL_MS = 60 * 1000;
+// Tag membership has no dedicated workspace event. Poll only while the
+// Bookmarked source is actually visible, and fetch ids only; normal notebook
+// streams remain fully event-driven.
+const BOOKMARK_WATCH_INTERVAL_MS = 1000;
+
+// Finding a tag requires listing the tag collection. When Bookmarked does not
+// exist yet, do that heavier lookup much less often than the normal id probe.
+const MISSING_BOOKMARK_TAG_LOOKUP_INTERVAL_MS = 5000;
 
 interface PanelMessage {
-	type: 'refresh' | 'openEntry' | 'openNote' | 'openLink';
+	type: 'refresh' | 'loadMore' | 'selectSource' | 'toggleBookmark' | 'openNote' | 'openLink';
 	noteId?: string;
 	url?: string;
-	/** Journal title for openEntry, or absent for today. */
-	title?: string;
+	sourceId?: string;
+	bookmarked?: boolean;
 }
 
-interface ResolvedFolder {
-	id: string | null;
+
+interface ResolvedStreamSource {
+	id: string;
+	kind: 'folder' | 'tag';
+	targetId: string;
+	label: string;
+}
+
+interface ResolvedSources {
+	sources: ResolvedStreamSource[];
+	folderLabels: Map<string, string>;
 	label: string;
 	status: FolderStatus;
+	selectedSourceId: string;
+	sourceOptions: StreamSourceOption[];
+	sourceKey: string;
 }
 
 const logError = (context: string) => (error: unknown) => {
-	console.error(`Journal Timeline: ${context}`, error);
+	console.error(`Stream Timeline: ${context}`, error);
 };
 
-/** Works out which notebook the timeline should show, and how to label it. */
-const resolveFolder = async (): Promise<ResolvedFolder> => {
-	const { folderId, newFolderName } = await getSettings();
+/** Resolves the Stream source selector into one or more concrete data sources. */
+const resolveSources = async (): Promise<ResolvedSources> => {
+	const { sourceId } = await getSettings();
+	const folders = await getNotebookPaths();
+	const folderLabels = new Map(folders.map(folder => [folder.id, folder.path]));
+	const sourceOptions: StreamSourceOption[] = [
+		{ id: ALL_FOLDERS, label: 'All notebooks' },
+		{ id: BOOKMARKED_SOURCE, label: 'Bookmarked' },
+		...folders.map(folder => ({ id: folder.id, label: folder.path })),
+	];
 
-	if (folderId === CREATE_NEW_FOLDER) return { id: null, label: newFolderName, status: 'pending' };
+	if (sourceId === ALL_FOLDERS) {
+		return {
+			sources: folders.map(folder => ({ id: folder.id, kind: 'folder', targetId: folder.id, label: folder.path })),
+			folderLabels,
+			label: 'All notebooks',
+			status: 'ready',
+			selectedSourceId: ALL_FOLDERS,
+			sourceOptions,
+			sourceKey: `${ALL_FOLDERS}:${folders.map(folder => folder.id).join(',')}`,
+		};
+	}
 
-	// Looked up through the full list rather than by id so the header can show
-	// the same "Parent/Child" path as the settings dropdown.
-	const folder = (await getFolderPaths()).find(candidate => candidate.id === folderId);
-	if (folder) return { id: folder.id, label: folder.path, status: 'ready' };
+	if (sourceId === BOOKMARKED_SOURCE) {
+		const tag = await findTagByTitle(BOOKMARK_TAG_TITLE);
+		return {
+			sources: tag ? [{ id: BOOKMARKED_SOURCE, kind: 'tag', targetId: tag.id, label: BOOKMARK_TAG_TITLE }] : [],
+			folderLabels,
+			label: 'Bookmarked',
+			status: 'ready',
+			selectedSourceId: BOOKMARKED_SOURCE,
+			sourceOptions,
+			sourceKey: `${BOOKMARKED_SOURCE}:${tag?.id ?? 'missing'}`,
+		};
+	}
 
-	return { id: null, label: newFolderName, status: 'missing' };
+
+	const folder = folders.find(candidate => candidate.id === sourceId);
+	if (folder) {
+		return {
+			sources: [{ id: folder.id, kind: 'folder', targetId: folder.id, label: folder.path }],
+			folderLabels,
+			label: folder.path,
+			status: 'ready',
+			selectedSourceId: folder.id,
+			sourceOptions,
+			sourceKey: folder.id,
+		};
+	}
+
+	// A <select> cannot display a selected value that has no option. Keep the
+	// vanished source visible long enough for the user to choose a replacement.
+	sourceOptions.push({ id: sourceId, label: '(the selected notebook no longer exists)' });
+	return {
+		sources: [],
+		folderLabels,
+		label: '(missing notebook)',
+		status: 'missing',
+		selectedSourceId: sourceId,
+		sourceOptions,
+		sourceKey: `missing:${sourceId}`,
+	};
 };
 
-export class JournalPanel {
+const listResolvedSourcePage = async (
+	source: ResolvedStreamSource,
+	page: number,
+	limit: number,
+	showFolderLabel: boolean,
+	folderLabels: ReadonlyMap<string, string>,
+): Promise<StreamPage> => {
+	if (source.kind === 'tag') return listTaggedStreamEntries(source.targetId, page, limit, folderLabels);
+	return listStreamEntries(source.targetId, page, limit, showFolderLabel ? source.label : '');
+};
+
+const streamPageLimit = (maxEntries: number): number => maxEntries > 0 ? Math.min(Math.floor(maxEntries), 100) : 100;
+
+// Array.sort is stable on the JavaScript versions Joplin runs. Returning 0 for
+// equal timestamps preserves the already-fetched order at a page boundary, so
+// loading an older source page never jumps an existing entry above another one.
+const sortStreamEntries = (entries: StreamEntry[]): StreamEntry[] => {
+	return entries.sort((a, b) => b.userCreatedTime - a.userCreatedTime);
+};
+
+export class StreamPanel {
 	private handle: ViewHandle;
 
 	// Renders are serialised: two overlapping setHtml() calls would race and the
@@ -64,15 +147,33 @@ export class JournalPanel {
 	// brought up to date the moment it becomes visible again.
 	private stale = false;
 
-	/** The day the panel was last drawn for, watched for midnight rollover. */
-	private renderedDay = '';
-
 	// Joplin always has a note open, so seeding the highlight from the editor
 	// meant the panel opened with an entry already picked out - one restored from
 	// the last session, that the reader had not chosen and had no reason to be
 	// looking at. The highlight is earned by a selection made since startup, not
 	// assumed from whatever the app happened to be showing.
 	private selectionSeen = false;
+
+	// Stream pages already visible in the panel. A normal refresh rebuilds this
+	// many pages so editing or syncing a note does not collapse the reader back
+	// to the first page.
+	private loadedPages = 1;
+	private loadedSourceKey = '';
+	private loadedMaxEntries = 0;
+	private hasMore = false;
+	private loadedNoteIds = new Set<string>();
+	private fetchedEntries = new Map<string, StreamEntry>();
+	private sourceHasMore = new Map<string, boolean>();
+	private loadingMore = false;
+	private loadMorePending = false;
+
+	// Bookmark membership is the only data source that needs polling. The id is
+	// cached from the last render so the common poll path never lists all tags.
+	private activeSourceId = '';
+	private bookmarkedTagId: string | null = null;
+	private bookmarkTagPromise: Promise<string> | null = null;
+	private bookmarkWatchRunning = false;
+	private lastMissingBookmarkTagLookup = 0;
 
 	public async create(): Promise<void> {
 		this.handle = await joplin.views.panels.create(PANEL_ID);
@@ -90,21 +191,17 @@ export class JournalPanel {
 		await this.renderNow();
 
 		setInterval(() => {
-			// `stale` already means "redraw when next shown", so there is nothing
-			// to do until the panel comes back.
-			if (this.stale || todayTitle() === this.renderedDay) return;
-
-			this.render().catch(logError('the midnight refresh failed'));
-		}, DAY_WATCH_INTERVAL_MS);
+			this.checkBookmarkedMembership().catch(logError('the bookmark membership check failed'));
+		}, BOOKMARK_WATCH_INTERVAL_MS);
 	}
 
 	/**
 	 * Redraws whether or not anything is known to have changed, and rebuilds the
-	 * notebook list with it. Backs the "Refresh Journal Timeline" command and the
+	 * notebook list with it. Backs the "Refresh Stream Timeline" command and the
 	 * retry link shown when a render fails.
 	 */
 	public async refresh(): Promise<void> {
-		await refreshFolderOptions();
+		await refreshSourceOptions();
 		await this.renderNow();
 	}
 
@@ -152,6 +249,99 @@ export class JournalPanel {
 		});
 	}
 
+	private async ensureBookmarkTagId(): Promise<string> {
+		if (this.bookmarkedTagId) return this.bookmarkedTagId;
+		if (this.bookmarkTagPromise) return this.bookmarkTagPromise;
+
+		this.bookmarkTagPromise = findOrCreateTagByTitle(BOOKMARK_TAG_TITLE)
+			.then(tag => {
+				this.bookmarkedTagId = tag.id;
+				this.lastMissingBookmarkTagLookup = 0;
+				return tag.id;
+			})
+			.finally(() => {
+				this.bookmarkTagPromise = null;
+			});
+
+		return this.bookmarkTagPromise;
+	}
+
+	private async bookmarkedIdsForEntries(entries: StreamEntry[], sourceId: string): Promise<string[]> {
+		if (!entries.length) return [];
+		if (sourceId === BOOKMARKED_SOURCE) return entries.map(entry => entry.id);
+
+		if (!this.bookmarkedTagId) {
+			const now = Date.now();
+			if (now - this.lastMissingBookmarkTagLookup >= MISSING_BOOKMARK_TAG_LOOKUP_INTERVAL_MS) {
+				this.lastMissingBookmarkTagLookup = now;
+				const tag = await findTagByTitle(BOOKMARK_TAG_TITLE);
+				if (tag) {
+					this.bookmarkedTagId = tag.id;
+					this.lastMissingBookmarkTagLookup = 0;
+				}
+			}
+		}
+
+		if (!this.bookmarkedTagId) return [];
+
+		const oldest = entries.reduce((value, entry) => Math.min(value, entry.userCreatedTime), Number.POSITIVE_INFINITY);
+		const tagged = await getTaggedNoteIdsAtOrAfter(this.bookmarkedTagId, Number.isFinite(oldest) ? oldest : 0);
+		return entries.filter(entry => tagged.has(entry.id)).map(entry => entry.id);
+	}
+
+	private async toggleBookmark(noteId: string, bookmarked: boolean): Promise<{ ok: boolean; bookmarked: boolean }> {
+		// The webview boundary is untrusted. Only an entry that is currently loaded
+		// in this panel may mutate its Bookmarked membership.
+		if (!this.loadedNoteIds.has(noteId)) return { ok: false, bookmarked: !bookmarked };
+
+		let tagId = this.bookmarkedTagId;
+		if (bookmarked) {
+			tagId = await this.ensureBookmarkTagId();
+		} else if (!tagId) {
+			const tag = await findTagByTitle(BOOKMARK_TAG_TITLE);
+			if (!tag) return { ok: true, bookmarked: false };
+			tagId = tag.id;
+			this.bookmarkedTagId = tagId;
+		}
+
+		await setNoteTag(tagId, noteId, bookmarked);
+
+		// Removing an item from the Bookmarked source changes source membership, so
+		// rebuild that Stream. Other sources only need the button state changed.
+		if (this.activeSourceId === BOOKMARKED_SOURCE && !bookmarked) this.scheduleRender();
+
+		return { ok: true, bookmarked };
+	}
+
+	private async checkBookmarkedMembership(): Promise<void> {
+		if (this.activeSourceId !== BOOKMARKED_SOURCE || this.bookmarkWatchRunning || this.rendering || this.loadingMore || this.refreshTimer) return;
+		if (!await joplin.views.panels.visible(this.handle)) return;
+
+		this.bookmarkWatchRunning = true;
+		try {
+			if (!this.bookmarkedTagId) {
+				const now = Date.now();
+				if (now - this.lastMissingBookmarkTagLookup < MISSING_BOOKMARK_TAG_LOOKUP_INTERVAL_MS) return;
+				this.lastMissingBookmarkTagLookup = now;
+
+				const tag = await findTagByTitle(BOOKMARK_TAG_TITLE);
+				if (tag) {
+					this.bookmarkedTagId = tag.id;
+					this.scheduleRender();
+				}
+				return;
+			}
+
+			const snapshot = await getTaggedMembershipSnapshot(this.bookmarkedTagId, this.loadedNoteIds.size);
+			const membershipChanged = snapshot.noteIds.length !== this.loadedNoteIds.size
+				|| snapshot.noteIds.some(noteId => !this.loadedNoteIds.has(noteId));
+
+			if (membershipChanged || snapshot.hasMore !== this.hasMore) this.scheduleRender();
+		} finally {
+			this.bookmarkWatchRunning = false;
+		}
+	}
+
 	/**
 	 * Coalesces bursts of events into a single refresh. The notebook dropdown is
 	 * rebuilt even when the panel is hidden, so the config screen is current
@@ -163,45 +353,90 @@ export class JournalPanel {
 		this.refreshTimer = setTimeout(() => {
 			this.refreshTimer = null;
 
-			refreshFolderOptions()
+			refreshSourceOptions()
 				.catch(logError('could not refresh the notebook list'))
 				.then(() => this.render())
 				.catch(logError('a scheduled refresh failed'));
 		}, REFRESH_DEBOUNCE_MS);
 	}
 
-	/**
-	 * Opens the entry for `title`, writing a new note when that day has none.
-	 * Defaults to today, which is what the toolbar button and the command ask
-	 * for; the date picker names any other day, so an entry missed last week can
-	 * be filled in without hand-titling a note.
-	 */
-	public async openEntry(title: string = todayTitle()): Promise<void> {
-		// The title crosses the webview boundary, so it is checked rather than
-		// trusted - it ends up as a note title, and "2026-02-31" is not a day.
-		if (!parseJournalTitle(title)) return;
 
-		// The panel already renders from resolveFolder, and it answers exactly what
-		// is needed here: an id when the notebook exists, otherwise the name to
-		// create it under. Asking it again keeps the two from disagreeing about
-		// which notebook the journal lives in.
-		const resolved = await resolveFolder();
-		let folderId = resolved.id;
+	/** Loads only the next stream page and appends it to the existing webview DOM. */
+	public async loadMore(): Promise<void> {
+		if (this.loadingMore || !this.hasMore) return;
 
-		if (!folderId) {
-			// Creating the notebook is what turns the "create a new notebook" choice
-			// into a real selection, so the dropdown is pointed at it straight away.
-			folderId = (await findOrCreateFolderByPath(resolved.label)).id;
-			await setFolderId(folderId);
-			await refreshFolderOptions();
+		if (this.rendering) {
+			this.loadMorePending = true;
+			return;
 		}
 
-		const noteId = await findOrCreateJournalNote(folderId, title.trim());
-		await joplin.commands.execute('openNote', noteId);
-		await this.render();
+		this.loadingMore = true;
+		try {
+			const { maxEntries } = await getSettings();
+			const resolved = await resolveSources();
+
+			// A settings or notebook change can race a click from the old panel. A
+			// normal render is the only safe response because page numbers belong to
+			// the old source.
+			if (resolved.sourceKey !== this.loadedSourceKey || maxEntries !== this.loadedMaxEntries) {
+				await this.renderNow();
+				return;
+			}
+
+			const nextPage = this.loadedPages + 1;
+			const activeSources = resolved.sources.filter(source => this.sourceHasMore.get(source.id) === true);
+			const showFolderLabels = resolved.selectedSourceId === ALL_FOLDERS;
+			const results = await Promise.all(activeSources.map(async source => ({
+				source,
+				stream: await listResolvedSourcePage(source, nextPage, maxEntries, showFolderLabels, resolved.folderLabels),
+			})));
+
+			for (const { source, stream } of results) {
+				for (const entry of stream.entries) this.fetchedEntries.set(entry.id, entry);
+				this.sourceHasMore.set(source.id, Boolean(stream.hasMore && stream.entries.length));
+			}
+
+			const limit = streamPageLimit(maxEntries);
+			const visible = sortStreamEntries([...this.fetchedEntries.values()]).slice(0, nextPage * limit);
+			const entries = visible.filter(entry => !this.loadedNoteIds.has(entry.id));
+			this.loadedNoteIds = new Set(visible.map(entry => entry.id));
+			this.loadedPages = nextPage;
+			this.hasMore = this.fetchedEntries.size > visible.length || [...this.sourceHasMore.values()].some(Boolean);
+			const selectedNoteIds = this.selectionSeen ? await joplin.workspace.selectedNoteIds() : [];
+			const bookmarkedNoteIds = await this.bookmarkedIdsForEntries(entries, resolved.selectedSourceId);
+
+			joplin.views.panels.postMessage(this.handle, {
+				type: 'appendEntries',
+				entriesHtml: buildStreamEntriesHtml(entries, await renderEntryBodies(entries), selectedNoteIds, bookmarkedNoteIds),
+				footerHtml: buildStreamFooterHtml(this.hasMore),
+			});
+		} finally {
+			this.loadingMore = false;
+
+			// A note or settings event that arrived while the page was loading is
+			// rebuilt afterwards, so an appended page cannot overwrite fresher state.
+			if (this.renderPending) {
+				this.renderPending = false;
+				await this.renderNow();
+			}
+		}
+	}
+
+	private async selectSource(sourceId: string): Promise<void> {
+		const folders = await getNotebookPaths();
+		if (sourceId !== ALL_FOLDERS && sourceId !== BOOKMARKED_SOURCE && !folders.some(folder => folder.id === sourceId)) return;
+
+		await setSourceId(sourceId);
+		this.loadedPages = 1;
+		await this.renderNow();
 	}
 
 	private async renderNow(): Promise<void> {
+		if (this.loadingMore) {
+			this.renderPending = true;
+			return;
+		}
+
 		if (this.rendering) {
 			this.renderPending = true;
 			return;
@@ -218,43 +453,79 @@ export class JournalPanel {
 		} finally {
 			this.rendering = false;
 		}
+
+		if (this.loadMorePending) {
+			this.loadMorePending = false;
+			await this.loadMore();
+		}
 	}
 
 	private async setHtml(): Promise<void> {
 		let label = '';
 
-		// Recorded even when the render fails, so a persistent error cannot turn
-		// the day watcher into a once-a-minute retry loop. Recovery from an error
-		// is the retry link's job.
-		this.renderedDay = todayTitle();
-
 		try {
-			const { maxEntries, showImages, showOnThisDay } = await getSettings();
-			const folder = await resolveFolder();
-			label = folder.label;
+			const { maxEntries, showImages } = await getSettings();
+			const resolved = await resolveSources();
+			label = resolved.label;
+			this.activeSourceId = resolved.selectedSourceId;
+			if (resolved.selectedSourceId === BOOKMARKED_SOURCE) {
+				this.bookmarkedTagId = resolved.sources.find(source => source.kind === 'tag')?.targetId ?? null;
+				this.lastMissingBookmarkTagLookup = this.bookmarkedTagId ? 0 : Date.now();
+			}
 
-			const { entries, total, onThisDay } = folder.id
-				? await listJournalEntries(folder.id, maxEntries)
-				: { entries: [], total: 0, onThisDay: [] };
+			if (resolved.sourceKey !== this.loadedSourceKey || maxEntries !== this.loadedMaxEntries) {
+				this.loadedPages = 1;
+			}
 
-			// Bodies for past years are only fetched when the section is on, so
-			// turning it off costs nothing per refresh. An entry appearing in both
-			// lists is rendered once - renderEntryBodies keys by note id, and the
-			// render cache absorbs the repeat.
-			const past = showOnThisDay ? onThisDay : [];
+			const fetchedEntries = new Map<string, StreamEntry>();
+			const sourceHasMore = new Map<string, boolean>();
+			let activeSources = [...resolved.sources];
+			const showFolderLabels = resolved.selectedSourceId === ALL_FOLDERS;
+
+			for (let page = 1; page <= this.loadedPages && activeSources.length; page++) {
+				const results = await Promise.all(activeSources.map(async source => ({
+					source,
+					stream: await listResolvedSourcePage(source, page, maxEntries, showFolderLabels, resolved.folderLabels),
+				})));
+				const nextActive: ResolvedStreamSource[] = [];
+
+				for (const { source, stream } of results) {
+					for (const entry of stream.entries) fetchedEntries.set(entry.id, entry);
+					const sourceMore = Boolean(stream.hasMore && stream.entries.length);
+					sourceHasMore.set(source.id, sourceMore);
+					if (sourceMore) nextActive.push(source);
+				}
+
+				activeSources = nextActive;
+			}
+
+			const limit = streamPageLimit(maxEntries);
+			const merged = sortStreamEntries([...fetchedEntries.values()]);
+			const entries = merged.slice(0, this.loadedPages * limit);
+
+			this.loadedSourceKey = resolved.sourceKey;
+			this.loadedMaxEntries = maxEntries;
+			this.fetchedEntries = fetchedEntries;
+			this.sourceHasMore = sourceHasMore;
+			this.loadedNoteIds = new Set(entries.map(entry => entry.id));
+			this.hasMore = fetchedEntries.size > entries.length || [...sourceHasMore.values()].some(Boolean);
+			const bookmarkedNoteIds = await this.bookmarkedIdsForEntries(entries, resolved.selectedSourceId);
 
 			await joplin.views.panels.setHtml(this.handle, buildPanelHtml({
-				folderLabel: folder.label,
-				status: folder.status,
+				folderLabel: resolved.label,
+				status: resolved.status,
 				entries,
-				bodies: await renderEntryBodies([...entries, ...past]),
-				todayTitle: todayTitle(),
-				maxEntries,
-				truncated: total > entries.length,
+				bodies: await renderEntryBodies(entries),
+				truncated: this.hasMore,
 				showImages,
-				onThisDay: past,
 				fontSize: await getEditorFontSize(),
 				selectedNoteIds: this.selectionSeen ? await joplin.workspace.selectedNoteIds() : [],
+				bookmarkedNoteIds,
+				selectedSourceId: resolved.selectedSourceId,
+				sourceOptions: resolved.sourceOptions,
+				emptyNotice: resolved.selectedSourceId === BOOKMARKED_SOURCE
+					? `No notes are bookmarked yet. Bookmark a note from another Stream source to see it here.`
+					: undefined,
 			}));
 
 			this.stale = false;
@@ -266,15 +537,18 @@ export class JournalPanel {
 		}
 	}
 
-	private async onMessage(message: PanelMessage): Promise<void> {
+	private async onMessage(message: PanelMessage): Promise<unknown> {
 		if (!message?.type) return;
 
 		try {
 			if (message.type === 'refresh') {
 				await this.refresh();
-			} else if (message.type === 'openEntry') {
-				// Undefined for the today button, which is what openEntry defaults to.
-				await this.openEntry(message.title);
+			} else if (message.type === 'loadMore') {
+				await this.loadMore();
+			} else if (message.type === 'selectSource' && message.sourceId) {
+				await this.selectSource(message.sourceId);
+			} else if (message.type === 'toggleBookmark' && message.noteId && typeof message.bookmarked === 'boolean') {
+				return await this.toggleBookmark(message.noteId, message.bookmarked);
 			} else if (message.type === 'openNote' && message.noteId) {
 				await joplin.commands.execute('openNote', message.noteId);
 			} else if (message.type === 'openLink' && message.url) {
@@ -284,6 +558,9 @@ export class JournalPanel {
 			}
 		} catch (error) {
 			logError(`"${message.type}" failed`)(error);
+			if (message.type === 'toggleBookmark' && typeof message.bookmarked === 'boolean') {
+				return { ok: false, bookmarked: !message.bookmarked };
+			}
 		}
 	}
 }
