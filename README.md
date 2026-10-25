@@ -26,20 +26,48 @@ Joplin **3.2 or newer**, desktop only.
 
 ## Installation
 
-### From a `.jpl` file
+### Install a release `.jpl`
 
-Download the `.jpl` package from the repository's [Releases](https://github.com/Kamitai6/joplin-plugin-stream-timeline/releases) page and install it from Joplin's Plugins settings.
+1. Download the `.jpl` package from the repository's [Releases](https://github.com/Kamitai6/joplin-plugin-stream-timeline/releases) page.
+2. Open the normal Joplin desktop application.
+3. Open **Tools → Options → Plugins**.
+4. Open the plugin menu (gear icon) and choose **Install from file**.
+5. Select the downloaded `.jpl` file.
+6. Restart Joplin completely.
 
-### Build from source
+After restart, **Stream Timeline** should appear in the installed plugin list and its panel can be shown from the toolbar or **Tools → Stream Timeline**.
+
+> **Important when switching from development to the installed plugin:**
+> If this repository is still registered under **Tools → Options → Plugins → Show Advanced Settings → Development plugins**, remove that development-plugin path before testing the installed `.jpl`, then restart Joplin. Otherwise Joplin can continue to run the source tree as a development plugin and open a detached plugin Developer Tools window at startup.
+
+### Build and install locally
+
+Install dependencies and build the distribution archive from the repository root:
 
 ```bash
 npm ci
 npm run dist
 ```
 
-The generated plugin archive is placed in `publish/`.
+The generated `.jpl` file is placed in `publish/`. Install that file with the same **Plugins → Install from file** procedure described above, then restart Joplin.
 
-For development, add the repository root to Joplin's **Development plugins** path and restart Joplin in development mode.
+If `package.json` was changed and only `package-lock.json` needs to be synchronised before the build, run:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+```
+
+### Development mode
+
+For development, add the repository root to Joplin's **Development plugins** setting and run Joplin with a separate development profile. On Windows, for example:
+
+```powershell
+& "C:\Program Files\Joplin\Joplin.exe" --env dev
+```
+
+A development plugin is intentionally treated differently from an installed `.jpl`; Joplin may open a detached Developer Tools window for the plugin. This does not mean the normal Joplin profile itself is running in development mode.
+
+When returning to normal use, remove the repository path from **Development plugins** in the normal Joplin profile and install the built `.jpl` instead.
 
 ## Usage
 
