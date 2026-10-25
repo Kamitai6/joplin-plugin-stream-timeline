@@ -1,5 +1,30 @@
 # Changelog
 
+# 1.5.0 (2026-10-25)
+
+### Features
+
+- Transform Journal Timeline into **Stream Timeline** for ordinary Joplin notes; date-formatted note titles are no longer required.
+- Order entries by `user_created_time`, keeping chronology stable when older notes are edited.
+- Add stream sources for **All notebooks**, individual notebooks, and the `Bookmarked` Joplin tag.
+- Merge notes from multiple notebooks into one newest-first timeline.
+- Add incremental **Load more** paging so long histories are not rendered into the DOM all at once.
+- Show each entry's creation date and time and, when applicable, its source notebook.
+- Add per-entry bookmark controls backed by the normal Joplin `Bookmarked` tag.
+- Add lightweight bookmark membership monitoring while the Bookmarked source is visible.
+
+### Changes
+
+- Rename the plugin, commands, panel identifiers, settings section, and source files from Journal terminology to Stream terminology.
+- Remove journal-only features including `YYYY-MM-DD` title filtering, today's-entry creation, date picker, On This Day, year headings, and midnight polling.
+- Replace the journal notebook configuration with a general Stream source selector.
+- Simplify the source tree and rename `journal.ts` to `stream.ts`.
+
+### Bug Fixes
+
+- Refresh the stream after note deletion so removed notes do not remain visible.
+- Keep Bookmarked views in sync when the `Bookmarked` tag is changed outside the panel.
+
 # [1.4.0](https://github.com/xFuture603/joplin-plugin-journal-timeline/compare/v1.3.0...v1.4.0) (2026-08-15)
 
 

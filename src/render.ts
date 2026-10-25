@@ -1,5 +1,5 @@
 import joplin from 'api';
-import { getNoteContent, JournalEntry } from './journal';
+import { getNoteContent, StreamEntry } from './stream';
 
 /** Matches Joplin's MarkupLanguage enum. */
 const MARKUP_MARKDOWN = 1;
@@ -21,18 +21,6 @@ const remember = (key: string, html: string): string => {
 	return html;
 };
 
-/**
- * Drops a leading "# 2026-08-10" heading. The panel shows the date as the entry
- * heading already, and entries written by older versions of this plugin - or by
- * hand - commonly repeat it as the first line.
- *
- * `title` is interpolated raw because an entry only has a title once it has
- * matched `/^\d{4}-\d{2}-\d{2}$/` in parseJournalTitle: digits and hyphens,
- * nothing a regex reads as syntax. Escape it again if that ever stops holding.
- */
-export const stripRepeatedTitle = (body: string, title: string): string => {
-	return body.replace(new RegExp(`^\\s*#{1,6}\\s+${title}\\s*(?:\\n|$)`), '');
-};
 
 /**
  * Renders one entry's note body to HTML via Joplin's own Markdown renderer.
@@ -42,14 +30,14 @@ export const stripRepeatedTitle = (body: string, title: string): string => {
  * note styles applied to the first entry only. The panel styles `.jt-md`
  * instead.
  */
-const renderEntryBody = async (entry: JournalEntry): Promise<string> => {
+const renderEntryBody = async (entry: StreamEntry): Promise<string> => {
 	const key = `${entry.id}:${entry.updatedTime}`;
 
 	const cached = cache.get(key);
 	if (cached !== undefined) return cached;
 
 	const { body, markupLanguage } = await getNoteContent(entry.id);
-	const markup = stripRepeatedTitle(body, entry.title).trim();
+	const markup = body.trim();
 	if (!markup) return remember(key, '');
 
 	const result = await joplin.commands.execute(
@@ -64,14 +52,14 @@ const renderEntryBody = async (entry: JournalEntry): Promise<string> => {
 };
 
 /** Renders every entry, tolerating failures so one bad note cannot blank the panel. */
-export const renderEntryBodies = async (entries: JournalEntry[]): Promise<Map<string, string>> => {
+export const renderEntryBodies = async (entries: StreamEntry[]): Promise<Map<string, string>> => {
 	const rendered = new Map<string, string>();
 
 	for (const entry of entries) {
 		try {
 			rendered.set(entry.id, await renderEntryBody(entry));
 		} catch (error) {
-			console.error(`Journal Timeline: could not render "${entry.title}"`, error);
+			console.error(`Stream Timeline: could not render "${entry.title}"`, error);
 			rendered.set(entry.id, '');
 		}
 	}

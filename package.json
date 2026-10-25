@@ -1,7 +1,7 @@
 {
-  "name": "joplin-plugin-journal-timeline",
-  "version": "1.4.0",
-  "description": "A Joplin panel that lists your dated journal notes as a timeline.",
+  "name": "joplin-plugin-stream-timeline",
+  "version": "1.5.0",
+  "description": "A Joplin plugin that streams notes from one or more notebooks into a continuous timeline.",
   "scripts": {
     "dist": "webpack --env joplin-plugin-config=buildMain && webpack --env joplin-plugin-config=buildExtraScripts && webpack --env joplin-plugin-config=createArchive",
     "prepare": "npm run dist",
@@ -9,14 +9,19 @@
     "update": "npm install -g generator-joplin && yo joplin --node-package-manager npm --update --force"
   },
   "license": "MIT",
+  "author": "Kamitai6",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xFuture603/joplin-plugin-journal-timeline.git"
+    "url": "git+https://github.com/Kamitai6/joplin-plugin-stream-timeline.git"
   },
-  "homepage": "https://github.com/xFuture603/joplin-plugin-journal-timeline#readme",
-  "bugs": "https://github.com/xFuture603/joplin-plugin-journal-timeline/issues",
+  "homepage": "https://github.com/Kamitai6/joplin-plugin-stream-timeline#readme",
+  "bugs": "https://github.com/Kamitai6/joplin-plugin-stream-timeline/issues",
   "keywords": [
-    "joplin-plugin"
+    "joplin-plugin",
+    "timeline",
+    "stream",
+    "notes",
+    "bookmarks"
   ],
   "files": [
     "publish"
