@@ -1,21 +1,33 @@
 import joplin from 'api';
-import { parseJournalTitle, sameDayYearsAgo } from './dates';
-
 export interface Folder {
 	id: string;
 	title: string;
 	parent_id: string;
 }
 
+export interface Tag {
+	id: string;
+	title: string;
+}
+
 interface Note {
 	id: string;
 	title: string;
+	parent_id?: string;
+	user_created_time?: number;
 	updated_time?: number;
 }
 
-export interface JournalEntry {
+export interface StreamEntry {
 	id: string;
 	title: string;
+	/** Notebook this entry came from. Used when multiple sources are merged. */
+	sourceFolderId?: string;
+	/** Full notebook path shown beside entries in an all-notebooks stream. */
+	sourceFolderLabel?: string;
+	/** The timeline position is fixed by Joplin's user_created_time. */
+	userCreatedTime: number;
+	/** Kept as a Date while the existing journal-oriented panel is still in use. */
 	date: Date;
 	/** Part of the render cache key, so an edited entry is re-rendered. */
 	updatedTime: number;
@@ -60,6 +72,107 @@ export interface FolderPath {
 }
 
 const getFolders = () => getAll<Folder>(['folders'], { fields: ['id', 'title', 'parent_id'] });
+const getTags = () => getAll<Tag>(['tags'], { fields: ['id', 'title'] });
+
+/** Finds an existing Joplin tag by title without creating data while rendering. */
+export const findTagByTitle = async (title: string): Promise<Tag | null> => {
+	const wanted = title.trim().toLowerCase();
+	if (!wanted) return null;
+
+	return (await getTags()).find(tag => tag.title.trim().toLowerCase() === wanted) ?? null;
+};
+
+/** Finds a tag by title, creating it only when an explicit user action needs it. */
+export const findOrCreateTagByTitle = async (title: string): Promise<Tag> => {
+	const normalized = title.trim();
+	if (!normalized) throw new Error('The tag title is empty.');
+
+	const existing = await findTagByTitle(normalized);
+	if (existing) return existing;
+
+	return await joplin.data.post(['tags'], null, { title: normalized }) as Tag;
+};
+
+/** Adds or removes one tag without changing any other note metadata. */
+export const setNoteTag = async (tagId: string, noteId: string, tagged: boolean): Promise<void> => {
+	if (tagged) {
+		await joplin.data.post(['tags', tagId, 'notes'], null, { id: noteId });
+		return;
+	}
+
+	await joplin.data.delete(['tags', tagId, 'notes', noteId]);
+};
+
+export interface TaggedMembershipSnapshot {
+	noteIds: string[];
+	hasMore: boolean;
+}
+
+/**
+ * Reads only enough tagged note ids to tell whether the currently visible
+ * Bookmarked slice changed. Bodies, titles and timestamps are deliberately not
+ * requested, keeping the periodic membership probe as small as possible.
+ */
+export const getTaggedMembershipSnapshot = async (tagId: string, visibleCount: number): Promise<TaggedMembershipSnapshot> => {
+	const safeVisibleCount = Math.max(0, Math.floor(visibleCount) || 0);
+	const probeCount = safeVisibleCount + 1;
+	const requestLimit = Math.min(PAGE_LIMIT, probeCount);
+	const noteIds: string[] = [];
+	let apiHasMore = false;
+
+	for (let page = 1; noteIds.length < probeCount; page++) {
+		const response = await joplin.data.get(['tags', tagId, 'notes'], {
+			fields: ['id'],
+			page,
+			limit: requestLimit,
+			order_by: 'user_created_time',
+			order_dir: 'DESC',
+		});
+		const pageItems: Note[] = response?.items ?? [];
+
+		noteIds.push(...pageItems.map(note => note.id));
+		apiHasMore = Boolean(response?.has_more);
+
+		if (!apiHasMore || !pageItems.length) break;
+	}
+
+	return {
+		noteIds: noteIds.slice(0, safeVisibleCount),
+		hasMore: noteIds.length > safeVisibleCount || apiHasMore,
+	};
+};
+
+
+/**
+ * Returns tagged note ids down to the oldest timestamp currently visible in a
+ * Stream. Because the tag list uses the same newest-first chronology as the
+ * Stream, no older tagged note can match an entry already on screen.
+ */
+export const getTaggedNoteIdsAtOrAfter = async (tagId: string, oldestUserCreatedTime: number): Promise<Set<string>> => {
+	const noteIds = new Set<string>();
+	const cutoff = Math.max(0, Number(oldestUserCreatedTime) || 0);
+
+	for (let page = 1; page <= MAX_PAGES; page++) {
+		const response = await joplin.data.get(['tags', tagId, 'notes'], {
+			fields: ['id', 'user_created_time'],
+			page,
+			limit: PAGE_LIMIT,
+			order_by: 'user_created_time',
+			order_dir: 'DESC',
+		});
+		const pageItems: Note[] = response?.items ?? [];
+
+		for (const note of pageItems) {
+			const created = Number(note.user_created_time) || 0;
+			if (created < cutoff) return noteIds;
+			noteIds.add(note.id);
+		}
+
+		if (!response?.has_more || !pageItems.length) break;
+	}
+
+	return noteIds;
+};
 
 const buildFolderPath = (folder: Folder, byId: Map<string, Folder>): string => {
 	const parts = [folder.title];
@@ -147,35 +260,114 @@ export const findOrCreateFolderByPath = async (folderPath: string): Promise<Fold
 	return folder;
 };
 
-export interface JournalListing {
-	entries: JournalEntry[];
-	/** Dated notes in the notebook before `maxEntries` was applied. */
-	total: number;
-	/** Today's month and day in earlier years, most recent first. */
-	onThisDay: JournalEntry[];
+/*
+ * Journal-era listing notes retained while this fork is migrated in stages:
+ * Dated notes in the notebook before `maxEntries` was applied.
+ * Today's month and day in earlier years, most recent first.
+ * Every note in the notebook whose title is a valid date, most recent first.
+ * Taken from the full list rather than the slice: last year's entry is almost
+ * never among the most recent `maxEntries`. This costs no extra request - every
+ * dated note has already been listed above.
+ *
+ * The stream path below intentionally replaces those rules with one paged,
+ * user_created_time-ordered source.
+ */
+export interface StreamPage {
+	entries: StreamEntry[];
+	/** Whether Joplin reports another page after this one. */
+	hasMore: boolean;
+	page: number;
+	limit: number;
 }
 
-/** Every note in the notebook whose title is a valid date, most recent first. */
-export const listJournalEntries = async (folderId: string, maxEntries: number): Promise<JournalListing> => {
+/**
+ * Reads one page of notes from a notebook, newest user-created timestamp first.
+ * The old journal listing filtered dated titles after fetching the whole
+ * notebook; the stream deliberately leaves every note eligible and lets Joplin
+ * do the ordering and pagination before anything reaches the panel.
+ */
+export const listStreamEntries = async (folderId: string, page: number, limit: number, sourceFolderLabel = ''): Promise<StreamPage> => {
+	const safePage = Math.max(1, Math.floor(page) || 1);
+	// `0` used to mean "render every journal entry". A stream never expands the
+	// whole notebook at once, so it maps to the largest page the data API allows.
+	const safeLimit = limit > 0 ? Math.min(Math.floor(limit), PAGE_LIMIT) : PAGE_LIMIT;
+
 	// Bodies are deliberately not requested here: only the entries that end up
 	// on screen are fetched, and only when they are not already rendered.
-	const notes = await getAll<Note>(['folders', folderId, 'notes'], { fields: ['id', 'title', 'updated_time'] });
+	const response = await joplin.data.get(['folders', folderId, 'notes'], {
+		fields: ['id', 'title', 'user_created_time', 'updated_time'],
+		page: safePage,
+		limit: safeLimit,
+		order_by: 'user_created_time',
+		order_dir: 'DESC',
+	});
+	const notes: Note[] = response?.items ?? [];
 
-	const entries: JournalEntry[] = [];
-	for (const note of notes) {
-		const date = parseJournalTitle(note.title);
-		if (date) entries.push({ id: note.id, title: note.title.trim(), date, updatedTime: Number(note.updated_time) || 0 });
-	}
-
-	entries.sort((a, b) => b.date.getTime() - a.date.getTime());
+	const entries = notes.map(note => {
+		const userCreatedTime = Number(note.user_created_time) || 0;
+		return {
+			id: note.id,
+			title: note.title.trim(),
+			sourceFolderId: folderId,
+			sourceFolderLabel: sourceFolderLabel || undefined,
+			userCreatedTime,
+			date: new Date(userCreatedTime),
+			updatedTime: Number(note.updated_time) || 0,
+		};
+	});
 
 	return {
-		total: entries.length,
-		entries: maxEntries > 0 ? entries.slice(0, maxEntries) : entries,
-		// Taken from the full list rather than the slice: last year's entry is
-		// almost never among the most recent `maxEntries`. This costs no extra
-		// request - every dated note has already been listed above.
-		onThisDay: entries.filter(entry => sameDayYearsAgo(entry.date) > 0),
+		entries,
+		hasMore: Boolean(response?.has_more),
+		page: safePage,
+		limit: safeLimit,
+	};
+};
+
+
+/**
+ * Reads one page of notes carrying a tag. The tag is only the membership rule;
+ * chronology still comes from each note's user_created_time, exactly like a
+ * notebook-backed Stream source.
+ */
+export const listTaggedStreamEntries = async (
+	tagId: string,
+	page: number,
+	limit: number,
+	folderLabels: ReadonlyMap<string, string> = new Map(),
+): Promise<StreamPage> => {
+	const safePage = Math.max(1, Math.floor(page) || 1);
+	const safeLimit = limit > 0 ? Math.min(Math.floor(limit), PAGE_LIMIT) : PAGE_LIMIT;
+
+	const response = await joplin.data.get(['tags', tagId, 'notes'], {
+		fields: ['id', 'parent_id', 'title', 'user_created_time', 'updated_time'],
+		page: safePage,
+		limit: safeLimit,
+		order_by: 'user_created_time',
+		order_dir: 'DESC',
+	});
+	const notes: Note[] = response?.items ?? [];
+
+	const entries = notes.map(note => {
+		const userCreatedTime = Number(note.user_created_time) || 0;
+		const folderLabel = note.parent_id ? folderLabels.get(note.parent_id) : undefined;
+
+		return {
+			id: note.id,
+			title: note.title.trim(),
+			sourceFolderId: note.parent_id || undefined,
+			sourceFolderLabel: folderLabel,
+			userCreatedTime,
+			date: new Date(userCreatedTime),
+			updatedTime: Number(note.updated_time) || 0,
+		};
+	});
+
+	return {
+		entries,
+		hasMore: Boolean(response?.has_more),
+		page: safePage,
+		limit: safeLimit,
 	};
 };
 

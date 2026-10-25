@@ -57,6 +57,18 @@
 	white-space: nowrap;
 }
 
+.jt-topbar__source {
+	display: block;
+	max-width: 100%;
+	padding: 3px 22px 3px 6px;
+	font: inherit;
+	font-size: 0.82em;
+	color: var(--joplin-color, #32373f);
+	background: var(--joplin-background-color, transparent);
+	border: 1px solid var(--joplin-divider-color, #dddddd);
+	border-radius: 4px;
+}
+
 .jt-topbar__title {
 	margin: 0;
 	font-size: 1.05em;
@@ -157,6 +169,70 @@
 	padding-bottom: 8px;
 	margin-bottom: 12px;
 	border-bottom: 1px solid var(--joplin-divider-color, #dddddd);
+}
+
+.jt-entry__header-actions {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+.jt-entry__source {
+	min-width: 0;
+	overflow: hidden;
+	font-size: 0.78em;
+	color: var(--joplin-color-faded, #7c8394);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.jt-entry__bookmark {
+	display: inline-grid;
+	flex: none;
+	width: 26px;
+	height: 26px;
+	padding: 4px;
+	place-items: center;
+	color: var(--joplin-color-faded, #7c8394);
+	cursor: pointer;
+	background: none;
+	border: none;
+	border-radius: 4px;
+	opacity: 0.58;
+}
+
+.jt-entry__bookmark svg {
+	width: 17px;
+	height: 17px;
+}
+
+.jt-entry__bookmark path {
+	fill: none;
+	stroke: currentColor;
+	stroke-linejoin: round;
+	stroke-width: 1.7;
+}
+
+.jt-entry__bookmark:hover {
+	color: var(--joplin-url-color, #155bda);
+	background: var(--joplin-background-color-hover3, rgba(128, 128, 128, 0.15));
+	opacity: 1;
+}
+
+.jt-entry__bookmark.is-bookmarked {
+	color: var(--joplin-url-color, #155bda);
+	opacity: 1;
+}
+
+.jt-entry__bookmark.is-bookmarked path {
+	fill: currentColor;
+}
+
+.jt-entry__bookmark:disabled {
+	cursor: default;
+	opacity: 0.45;
 }
 
 .jt-entry__date {
@@ -281,6 +357,7 @@
 }
 
 .jt-icon-button:focus-visible,
+.jt-entry__bookmark:focus-visible,
 .jt-entry__date:focus-visible,
 .jt-start:focus-visible,
 .jt-link:focus-visible {

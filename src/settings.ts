@@ -9,13 +9,22 @@ const DEFAULT_FOLDER_NAME = 'Journals';
 const DEFAULT_MAX_ENTRIES = 30;
 
 /** Above this, a refresh renders enough notes to be felt. */
-export const MAX_ENTRIES_LIMIT = 365;
+export const MAX_ENTRIES_LIMIT = 100;
 
 /**
  * Dropdown value meaning "no existing notebook chosen" - the notebook named by
  * `NewFolderName` is used instead, and created on demand.
  */
 export const CREATE_NEW_FOLDER = '__create__';
+
+/** Special source id meaning every notebook is merged into one stream. */
+export const ALL_FOLDERS = '__all__';
+
+/** Special source id backed by a normal Joplin tag rather than a notebook. */
+export const BOOKMARKED_SOURCE = '__bookmarked__';
+
+/** Dedicated Joplin tag used by the Bookmarked Stream source. */
+export const BOOKMARK_TAG_TITLE = 'Bookmarked';
 
 export enum SettingKey {
 	FolderId = 'folderId',
@@ -34,13 +43,15 @@ export interface JournalSettings {
 	newFolderName: string;
 	maxEntries: number;
 	showImages: boolean;
-	showOnThisDay: boolean;
 }
 
 export const buildFolderOptions = (folders: FolderPath[], selectedId: string): Record<string, string> => {
 	// Insertion order is the order shown in the dropdown, so the create entry
 	// goes first - it is the one that matters when no journal notebook exists.
+	// Stream stage 5 keeps the special Stream sources ahead of that legacy journal option.
 	const options: Record<string, string> = {
+		[ALL_FOLDERS]: 'All notebooks',
+		[BOOKMARKED_SOURCE]: 'Bookmarked',
 		[CREATE_NEW_FOLDER]: '+ Create a new notebook…',
 	};
 
@@ -62,15 +73,15 @@ const folderSetting = (folderOptions: Record<string, string>) => ({
 	public: true,
 	isEnum: true,
 	options: folderOptions,
-	label: 'Journal notebook',
-	description: 'The notebook holding your dated journal notes. Pick one you already use, or choose "Create a new notebook" and give it a name below.',
+	label: 'Stream source',
+	description: `Choose one notebook, merge every notebook, or show notes carrying the "${BOOKMARK_TAG_TITLE}" tag. "Create a new notebook" is retained for the original journal command.`,
 });
 
 export const registerSettings = async () => {
 	await joplin.settings.registerSection(SETTINGS_SECTION, {
-		label: 'Journal Timeline',
+		label: 'Stream Timeline',
 		iconName: 'fas fa-book-open',
-		description: 'Timeline panel for notes titled with a date (YYYY-MM-DD).',
+		description: 'Continuous timeline for notes ordered by their user-created time.',
 	});
 
 	await joplin.settings.registerSettings({
@@ -95,8 +106,8 @@ export const registerSettings = async () => {
 			type: SettingItemType.String,
 			section: SETTINGS_SECTION,
 			public: true,
-			label: 'Entries shown',
-			description: `How many of the most recent entries the panel renders, up to ${MAX_ENTRIES_LIMIT}. Each one is rendered in full, so large values make refreshing slower. Set to 0 to render every entry.`,
+			label: 'Entries per page',
+			description: `How many entries are loaded at a time, up to ${MAX_ENTRIES_LIMIT}. Each one is rendered in full, so large pages make loading slower. Set to 0 to use the maximum page size (${MAX_ENTRIES_LIMIT}).`,
 		},
 
 		[SettingKey.ShowImages]: {
@@ -108,14 +119,9 @@ export const registerSettings = async () => {
 			description: 'Turn this off to hide attached images in the panel. The notes themselves are not changed - images still appear in the editor and the note viewer.',
 		},
 
-		[SettingKey.ShowOnThisDay]: {
-			value: true,
-			type: SettingItemType.Bool,
-			section: SETTINGS_SECTION,
-			public: true,
-			label: 'Show "On this day"',
-			description: 'Puts the entries from today\'s date in earlier years above the timeline. The section only appears on days you have written about before.',
-		},
+		// Journal-era `ShowOnThisDay` is intentionally no longer registered: the
+		// Stream UI removed that section in stage 2. The enum key is kept above so
+		// existing profiles retain their stored value without it affecting the UI.
 
 		[SettingKey.PanelIntroduced]: {
 			value: false,
@@ -132,7 +138,6 @@ export const getSettings = async (): Promise<JournalSettings> => {
 		SettingKey.NewFolderName,
 		SettingKey.MaxEntries,
 		SettingKey.ShowImages,
-		SettingKey.ShowOnThisDay,
 	]);
 
 	const newFolderName = `${values[SettingKey.NewFolderName] ?? ''}`.trim();
@@ -142,7 +147,6 @@ export const getSettings = async (): Promise<JournalSettings> => {
 		newFolderName: newFolderName || DEFAULT_FOLDER_NAME,
 		maxEntries: parseMaxEntries(values[SettingKey.MaxEntries]),
 		showImages: values[SettingKey.ShowImages] !== false,
-		showOnThisDay: values[SettingKey.ShowOnThisDay] !== false,
 	};
 };
 

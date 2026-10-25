@@ -5,15 +5,27 @@
 // stop working after the first refresh.
 
 (() => {
-	const send = (message) => {
+	const request = (message) => {
 		if (typeof webviewApi === 'undefined') {
 			console.error('Journal Timeline: webviewApi is unavailable');
-			return;
+			return Promise.resolve(null);
 		}
 
-		webviewApi.postMessage(message).catch((error) => {
+		return webviewApi.postMessage(message).catch((error) => {
 			console.error('Journal Timeline: the plugin rejected a message', message, error);
+			return null;
 		});
+	};
+
+	const send = (message) => {
+		request(message);
+	};
+
+	const setBookmarkButtonState = (button, bookmarked) => {
+		button.classList.toggle('is-bookmarked', bookmarked);
+		button.setAttribute('aria-pressed', bookmarked ? 'true' : 'false');
+		button.setAttribute('aria-label', bookmarked ? 'Remove bookmark' : 'Add bookmark');
+		button.setAttribute('title', bookmarked ? 'Remove bookmark' : 'Add bookmark');
 	};
 
 	// Attachments render as thumbnails; clicking one toggles it to full width.
@@ -76,6 +88,9 @@
 			case 'refresh':
 				send({ type: 'refresh' });
 				break;
+			case 'load-more':
+				send({ type: 'loadMore' });
+				break;
 			case 'open-today':
 				send({ type: 'openEntry' });
 				break;
@@ -85,6 +100,25 @@
 				// a button, and it needs the user activation this handler runs under.
 				const picker = target.parentElement && target.parentElement.querySelector('.jt-pick__input');
 				if (picker && picker.showPicker) picker.showPicker();
+				break;
+			}
+			case 'toggle-bookmark': {
+				event.preventDefault();
+				event.stopPropagation();
+
+				const noteId = target.getAttribute('data-note-id');
+				if (!noteId || !(target instanceof HTMLButtonElement) || target.disabled) return;
+
+				const previous = target.getAttribute('aria-pressed') === 'true';
+				const next = !previous;
+				setBookmarkButtonState(target, next);
+				target.disabled = true;
+
+				request({ type: 'toggleBookmark', noteId, bookmarked: next }).then((response) => {
+					const accepted = response && response.ok === true;
+					setBookmarkButtonState(target, accepted ? response.bookmarked === true : previous);
+					target.disabled = false;
+				});
 				break;
 			}
 			case 'open-note':
@@ -99,8 +133,16 @@
 	// The picker's value is already YYYY-MM-DD, which is exactly a journal title -
 	// nothing to parse or format. Bound by class rather than data-action so the
 	// checkboxes inside a rendered entry cannot reach this.
+	// Stream stage 4 also routes the top-bar source selector through this stable
+	// document-level handler, so it survives setHtml() just like the old picker.
 	document.addEventListener('change', (event) => {
 		const input = event.target;
+
+		if (input instanceof HTMLSelectElement && input.classList.contains('jt-topbar__source') && input.value) {
+			send({ type: 'selectSource', sourceId: input.value });
+			return;
+		}
+
 		if (input instanceof HTMLInputElement && input.classList.contains('jt-pick__input') && input.value) {
 			send({ type: 'openEntry', title: input.value });
 		}
@@ -123,10 +165,24 @@
 	if (typeof webviewApi !== 'undefined') {
 		webviewApi.onMessage((event) => {
 			const message = event && event.message;
-			if (!message || message.type !== 'selection') return;
+			if (!message) return;
 
-			selectedNoteIds = message.noteIds || [];
-			applySelection(document);
+			if (message.type === 'selection') {
+				selectedNoteIds = message.noteIds || [];
+				applySelection(document);
+			} else if (message.type === 'appendEntries') {
+				const stream = document.querySelector('.jt-stream');
+				const footer = document.querySelector('.jt-stream-footer');
+
+				if (stream && message.entriesHtml) stream.insertAdjacentHTML('beforeend', message.entriesHtml);
+				if (footer) footer.innerHTML = message.footerHtml || '';
+
+				// Appending does not replace the scroller, so MutationObserver's
+				// re-render path intentionally ignores it. Apply the two DOM-only states
+				// that new entries still need here instead.
+				restoreExpandedImages(document);
+				applySelection(document);
+			}
 		});
 	}
 

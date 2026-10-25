@@ -1,4 +1,4 @@
-import { buildFolderOptions, CREATE_NEW_FOLDER, MAX_ENTRIES_LIMIT, parseMaxEntries } from './settings';
+import { ALL_FOLDERS, BOOKMARKED_SOURCE, buildFolderOptions, CREATE_NEW_FOLDER, MAX_ENTRIES_LIMIT, parseMaxEntries } from './settings';
 import { FolderPath } from './journal';
 
 const folders: FolderPath[] = [
@@ -10,8 +10,9 @@ const folders: FolderPath[] = [
 describe('buildFolderOptions', () => {
 	// Insertion order is what the dropdown shows, and creating a notebook is the
 	// option that matters when none of the existing ones is a journal.
-	test('offers to create a notebook first, then lists the rest in order', () => {
-		expect(Object.keys(buildFolderOptions(folders, 'f2'))).toEqual([CREATE_NEW_FOLDER, 'f1', 'f2', 'f3']);
+	// Stream stage 5 keeps the special Stream sources before that legacy journal option.
+	test('offers All notebooks, Bookmarked, then create, then the notebooks in order', () => {
+		expect(Object.keys(buildFolderOptions(folders, 'f2'))).toEqual([ALL_FOLDERS, BOOKMARKED_SOURCE, CREATE_NEW_FOLDER, 'f1', 'f2', 'f3']);
 	});
 
 	test('labels notebooks by their full path', () => {
@@ -24,8 +25,8 @@ describe('buildFolderOptions', () => {
 		expect(buildFolderOptions(folders, 'gone').gone).toMatch(/no longer exists/);
 	});
 
-	test('leaves creating a notebook as the only choice when there are none', () => {
-		expect(Object.keys(buildFolderOptions([], ''))).toEqual([CREATE_NEW_FOLDER]);
+	test('keeps both Stream sources and the create option when there are no notebooks', () => {
+		expect(Object.keys(buildFolderOptions([], ''))).toEqual([ALL_FOLDERS, BOOKMARKED_SOURCE, CREATE_NEW_FOLDER]);
 	});
 });
 
@@ -33,8 +34,8 @@ describe('parseMaxEntries', () => {
 	// The setting is free text, because Joplin's Int field cannot be typed into:
 	// it is a controlled number input, so clearing it writes 0 and "0" returns.
 	test('reads a plain number', () => {
-		expect(parseMaxEntries('240')).toBe(240);
-		expect(parseMaxEntries(' 240 ')).toBe(240);
+		expect(parseMaxEntries('80')).toBe(80);
+		expect(parseMaxEntries(' 80 ')).toBe(80);
 		expect(parseMaxEntries('30.7')).toBe(30);
 	});
 

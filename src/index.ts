@@ -81,6 +81,12 @@ joplin.plugins.register({
 			// Highlight whichever entry is now open in the editor.
 			panel.syncSelection().catch(error => console.error('Journal Timeline: could not update the selection', error));
 
+			// Deleting the selected note changes the selection after the note has already
+			// disappeared from Joplin's note list. onNoteChange() is not guaranteed to
+			// reach this plugin for that deleted note, so rebuild the stream here too.
+			// scheduleRender() is debounced, and the panel restores its scroll position.
+			panel.scheduleRender();
+
 			// The panel can also be revealed from Joplin's own layout controls,
 			// which raise no event, so catch up the next time the user moves around.
 			if (panel.needsRefresh) panel.scheduleRender();

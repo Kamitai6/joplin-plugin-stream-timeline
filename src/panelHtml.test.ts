@@ -1,13 +1,14 @@
-import { buildErrorHtml, buildPanelHtml, PanelState } from './panelHtml';
-import { JournalEntry } from './journal';
+import { buildErrorHtml, buildPanelHtml, buildStreamEntriesHtml, buildStreamFooterHtml, PanelState } from './panelHtml';
+import { StreamEntry } from './journal';
 import { toJournalTitle } from './dates';
 
 const today = new Date();
 const shift = (days: number) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + days);
 
-const entryFor = (date: Date): JournalEntry => ({
+const entryFor = (date: Date): StreamEntry => ({
 	id: `n-${toJournalTitle(date)}`,
 	title: toJournalTitle(date),
+	userCreatedTime: date.getTime(),
 	date,
 	updatedTime: 1,
 });
@@ -24,6 +25,13 @@ const panel = (over: Partial<PanelState> = {}) => buildPanelHtml({
 	onThisDay: [],
 	fontSize: 0,
 	selectedNoteIds: [],
+	bookmarkedNoteIds: [],
+	selectedSourceId: 'f-journals',
+	sourceOptions: [
+		{ id: '__all__', label: 'All notebooks' },
+		{ id: '__bookmarked__', label: 'Bookmarked' },
+		{ id: 'f-journals', label: 'Journals' },
+	],
 	...over,
 });
 
@@ -36,7 +44,7 @@ const articleFor = (html: string, id: string) => {
 describe('escaping', () => {
 	const hostile = panel({
 		folderLabel: 'Journals/<img src=x onerror="alert(1)">',
-		entries: [{ id: '"><script>alert(1)</script>', title: '2026-08-10', date: shift(-2), updatedTime: 1 }],
+		entries: [{ id: '"><script>alert(1)</script>', title: '2026-08-10', userCreatedTime: shift(-2).getTime(), date: shift(-2), updatedTime: 1 }],
 		bodies: new Map([['"><script>alert(1)</script>', '<p>Rendered <em>body</em></p>']]),
 	});
 
@@ -57,7 +65,7 @@ describe('escaping', () => {
 	});
 });
 
-describe('today', () => {
+describe.skip('journal-era today UI (removed in Stream stage 2)', () => {
 	test('badges today and yesterday', () => {
 		const html = panel({ entries: [entryFor(shift(0)), entryFor(shift(-1))] });
 		expect(html).toContain('>Today<');
@@ -102,7 +110,7 @@ describe('selection', () => {
 		expect(articleFor(html, entryFor(shift(0)).id)).not.toContain('jt-entry--selected');
 	});
 
-	test('composes with today when they are the same entry', () => {
+	test.skip('composes with today when they are the same entry', () => {
 		const todayEntry = entryFor(shift(0));
 		const selected = panel({ entries: [todayEntry], selectedNoteIds: [todayEntry.id] });
 		expect(selected).toMatch(/jt-entry--today jt-entry--selected/);
@@ -124,7 +132,7 @@ describe('entries', () => {
 	});
 });
 
-describe('the year heading', () => {
+describe.skip('journal-era year heading (removed in Stream stage 2)', () => {
 	test('opens on the year at the top of the list', () => {
 		const html = panel({ entries: [entryFor(new Date(2026, 0, 2)), entryFor(new Date(2025, 11, 30))] });
 		expect(html).toMatch(/class="jt-topbar__title">\s*2026\s*</);
@@ -156,7 +164,7 @@ describe('the year heading', () => {
 	});
 });
 
-describe('on this day', () => {
+describe.skip('journal-era on this day UI (removed in Stream stage 2)', () => {
 	const lastYear = entryFor(yearsBack(1));
 	const longAgo = entryFor(yearsBack(4));
 
@@ -235,7 +243,8 @@ describe('on this day', () => {
 
 describe('images', () => {
 	const withImage = new Map([['n-x', '<p><img src="joplin-content://note-viewer/x.png"></p>']]);
-	const imageEntry: JournalEntry = { id: 'n-x', title: '2026-08-10', date: shift(-2), updatedTime: 1 };
+	const imageDate = shift(-2);
+	const imageEntry: StreamEntry = { id: 'n-x', title: '2026-08-10', userCreatedTime: imageDate.getTime(), date: imageDate, updatedTime: 1 };
 
 	test('are shown by default', () => {
 		expect(panel({ entries: [imageEntry], bodies: withImage })).not.toContain('jt--no-images');
@@ -268,7 +277,7 @@ describe('font size', () => {
 	});
 });
 
-describe('the top bar', () => {
+describe.skip('journal-era top bar actions (removed in Stream stage 2)', () => {
 	// Joplin ships Font Awesome 5 to plugin webviews; FA6-only names render blank.
 	test('uses Font Awesome 5 icon names', () => {
 		expect(panel()).toContain('fa-pen');
@@ -312,15 +321,165 @@ describe('the top bar', () => {
 
 describe('notices', () => {
 	test('explains an empty notebook', () => {
-		expect(panel()).toContain('No dated notes in this notebook yet');
+		expect(panel()).toContain('No notes in this notebook yet');
 	});
 
 	test('explains a notebook that has not been created', () => {
 		expect(panel({ status: 'pending' })).toContain('created the first time');
 	});
 
-	test('says when the list was cut short', () => {
+	test('offers another page when more entries exist', () => {
 		const html = panel({ entries: [entryFor(shift(0))], maxEntries: 5, truncated: true });
-		expect(html).toContain('Showing the 5 most recent entries');
+		expect(html).toContain('data-action="load-more"');
+		expect(html).toContain('Load more');
+	});
+
+	test('removes the load-more control at the end of the stream', () => {
+		expect(buildStreamFooterHtml(false)).toBe('');
+		expect(panel({ entries: [entryFor(shift(0))], truncated: false })).not.toContain('data-action="load-more"');
+	});
+});
+
+
+describe('paged stream fragments', () => {
+	test('renders entries without rebuilding the surrounding panel', () => {
+		const entry = entryFor(shift(-2));
+		const html = buildStreamEntriesHtml([entry], new Map([[entry.id, '<p>older</p>']]), []);
+
+		expect(html).toContain(`data-note-id="${entry.id}"`);
+		expect(html).toContain('<p>older</p>');
+		expect(html).not.toContain('jt-topbar');
+		expect(html).not.toContain('jt-scroll');
+	});
+
+	test('renders a load-more footer only while another page exists', () => {
+		expect(buildStreamFooterHtml(true)).toContain('data-action="load-more"');
+		expect(buildStreamFooterHtml(false)).toBe('');
+	});
+});
+
+describe('stream presentation', () => {
+	const entryAt = (hour: number, minute: number, title: string): StreamEntry => {
+		const date = new Date(2026, 9, 23, hour, minute);
+		return {
+			id: `n-${title}`,
+			title,
+			userCreatedTime: date.getTime(),
+			date,
+			updatedTime: 1,
+		};
+	};
+
+	test('shows each entry user-created date and time', () => {
+		const entry = entryAt(22, 13, 'test');
+		const date = new Date(entry.userCreatedTime);
+		const expectedDay = date.toLocaleDateString(undefined, {
+			weekday: 'long',
+			year: 'numeric',
+			month: 'long',
+			day: 'numeric',
+		});
+		const expectedTime = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+		const html = panel({ entries: [entry] });
+
+		expect(html).toContain(expectedDay);
+		expect(html).toContain(expectedTime);
+	});
+
+	test('distinguishes two entries created on the same day by time', () => {
+		const later = entryAt(22, 13, 'later');
+		const earlier = entryAt(22, 9, 'earlier');
+		const html = panel({ entries: [later, earlier] });
+		const laterTime = new Date(later.userCreatedTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+		const earlierTime = new Date(earlier.userCreatedTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+		expect(html).toContain(laterTime);
+		expect(html).toContain(earlierTime);
+		expect(laterTime).not.toBe(earlierTime);
+	});
+
+	test('removes journal-specific timeline chrome', () => {
+		const html = panel({ entries: [entryAt(22, 13, 'test')] });
+
+		expect(html).toMatch(/class="jt-topbar__title">\s*Stream\s*</);
+		expect(html).not.toContain('>Today<');
+		expect(html).not.toContain('Yesterday');
+		expect(html).not.toContain('On this day');
+		expect(html).not.toContain('data-action="open-today"');
+		expect(html).not.toContain('data-action="pick-date"');
+		expect(html).not.toContain('data-year=');
+	});
+});
+
+
+describe('stream sources', () => {
+	test('renders All notebooks and individual notebooks in the source selector', () => {
+		const html = panel();
+		expect(html).toContain('class="jt-topbar__source"');
+		expect(html).toContain('<option value="__all__">All notebooks</option>');
+		expect(html).toContain('<option value="__bookmarked__">Bookmarked</option>');
+		expect(html).toContain('<option value="f-journals" selected>Journals</option>');
+	});
+
+	test('shows the notebook path beside entries only when a merged entry carries one', () => {
+		const date = shift(-2);
+		const entry: StreamEntry = {
+			id: 'merged',
+			title: 'Merged',
+			sourceFolderId: 'robot',
+			sourceFolderLabel: 'Robot/Logs',
+			userCreatedTime: date.getTime(),
+			date,
+			updatedTime: 1,
+		};
+		const html = panel({ entries: [entry] });
+		expect(html).toContain('class="jt-entry__source"');
+		expect(html).toContain('Robot/Logs');
+	});
+});
+
+
+describe('bookmarked source', () => {
+	test('can be selected like any other Stream source', () => {
+		const html = panel({ selectedSourceId: '__bookmarked__' });
+		expect(html).toContain('<option value="__bookmarked__" selected>Bookmarked</option>');
+	});
+
+	test('explains that bookmarks are backed by the Joplin tag', () => {
+		const html = panel({
+			selectedSourceId: '__bookmarked__',
+			emptyNotice: 'No notes are bookmarked yet. Bookmark a note from another Stream source to see it here.',
+		});
+		expect(html).toContain('Bookmarked');
+		expect(html).toContain('Bookmark a note from another Stream source');
+	});
+});
+
+
+describe('bookmark control', () => {
+	test('renders an outline bookmark for an unbookmarked entry', () => {
+		const entry = entryFor(shift(-2));
+		const html = panel({ entries: [entry] });
+
+		expect(html).toContain('data-action="toggle-bookmark"');
+		expect(html).toContain('aria-pressed="false"');
+		expect(html).toContain('aria-label="Add bookmark"');
+		expect(html).not.toContain('jt-entry__bookmark is-bookmarked');
+	});
+
+	test('renders a filled bookmark for a bookmarked entry', () => {
+		const entry = entryFor(shift(-2));
+		const html = panel({ entries: [entry], bookmarkedNoteIds: [entry.id] });
+
+		expect(html).toContain('jt-entry__bookmark is-bookmarked');
+		expect(html).toContain('aria-pressed="true"');
+		expect(html).toContain('aria-label="Remove bookmark"');
+	});
+
+	test('paged fragments preserve bookmark state', () => {
+		const entry = entryFor(shift(-3));
+		const html = buildStreamEntriesHtml([entry], new Map(), [], [entry.id]);
+
+		expect(html).toContain('jt-entry__bookmark is-bookmarked');
 	});
 });

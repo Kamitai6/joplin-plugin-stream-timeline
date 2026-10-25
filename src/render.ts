@@ -1,5 +1,5 @@
 import joplin from 'api';
-import { getNoteContent, JournalEntry } from './journal';
+import { getNoteContent, StreamEntry } from './journal';
 
 /** Matches Joplin's MarkupLanguage enum. */
 const MARKUP_MARKDOWN = 1;
@@ -42,14 +42,18 @@ export const stripRepeatedTitle = (body: string, title: string): string => {
  * note styles applied to the first entry only. The panel styles `.jt-md`
  * instead.
  */
-const renderEntryBody = async (entry: JournalEntry): Promise<string> => {
+const renderEntryBody = async (entry: StreamEntry): Promise<string> => {
 	const key = `${entry.id}:${entry.updatedTime}`;
 
 	const cached = cache.get(key);
 	if (cached !== undefined) return cached;
 
 	const { body, markupLanguage } = await getNoteContent(entry.id);
-	const markup = stripRepeatedTitle(body, entry.title).trim();
+	// Stream entries are no longer restricted to YYYY-MM-DD titles. Keep the
+	// complete body until the stream UI decides explicitly how note titles should
+	// be presented; feeding arbitrary titles to the journal-era regex would also
+	// make regexp metacharacters in a normal note title significant.
+	const markup = body.trim();
 	if (!markup) return remember(key, '');
 
 	const result = await joplin.commands.execute(
@@ -64,7 +68,7 @@ const renderEntryBody = async (entry: JournalEntry): Promise<string> => {
 };
 
 /** Renders every entry, tolerating failures so one bad note cannot blank the panel. */
-export const renderEntryBodies = async (entries: JournalEntry[]): Promise<Map<string, string>> => {
+export const renderEntryBodies = async (entries: StreamEntry[]): Promise<Map<string, string>> => {
 	const rendered = new Map<string, string>();
 
 	for (const entry of entries) {
