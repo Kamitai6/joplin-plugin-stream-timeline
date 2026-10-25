@@ -36,13 +36,15 @@ const articleFor = (html: string, id: string) => {
 
 describe('escaping', () => {
 	const hostileId = '"><script>alert(1)</script>';
+	const hostileSourceLabel = 'Journals/<img src=x onerror="alert(1)">';
 	const hostile = panel({
-		folderLabel: 'Journals/<img src=x onerror="alert(1)">',
+		selectedSourceId: 'f-hostile',
+		sourceOptions: [{ id: 'f-hostile', label: hostileSourceLabel }],
 		entries: [{ id: hostileId, title: 'Hostile', userCreatedTime: shift(-2).getTime(), updatedTime: 1 }],
 		bodies: new Map([[hostileId, '<p>Rendered <em>body</em></p>']]),
 	});
 
-	test('escapes notebook labels and note ids', () => {
+	test('escapes source labels and note ids', () => {
 		expect(hostile).not.toContain('<img src=x');
 		expect(hostile).not.toContain('<script>alert');
 		expect(hostile).toContain('&lt;img');

@@ -121,7 +121,7 @@ Only the current page is rendered initially. Older entries are fetched and appen
 
 ## Credits
 
-Stream Timeline is a fork of [Journal Timeline](https://github.com/xFuture603/joplin-plugin-journal-timeline) by xFuture603. Version 1.5.0 changes the journal-specific reader into a general-purpose note stream while retaining the original project's foundation.
+Stream Timeline is a fork of [Journal Timeline](https://github.com/xFuture603/joplin-plugin-journal-timeline) by xFuture603. Version 1.5.1 changes the journal-specific reader into a general-purpose note stream while retaining the original project's foundation.
 
 ## License
 
