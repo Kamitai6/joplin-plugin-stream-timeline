@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "com.github.kamitai6.stream-timeline",
   "app_min_version": "3.2",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "name": "Stream Timeline",
   "description": "Streams notes from one or more notebooks into a continuous timeline with incremental loading and bookmarks.",
   "author": "Kamitai6",

@@ -10,6 +10,12 @@ const PANEL_ID = 'streamPanel';
 // Note changes arrive in bursts, especially during sync; coalesce them.
 const REFRESH_DEBOUNCE_MS = 400;
 
+// The Plugin API exposes the currently selected notebook, but no dedicated
+// notebook-selection event. Poll only that lightweight workspace value so a
+// click in Joplin's sidebar can drive the Stream even when the notebook is
+// empty and therefore changes no note selection.
+const FOLDER_WATCH_INTERVAL_MS = 500;
+
 // Tag membership has no dedicated workspace event. Poll only while the
 // Bookmarked source is actually visible, and fetch ids only; normal notebook
 // streams remain fully event-driven.
@@ -143,6 +149,13 @@ export class StreamPanel {
 
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// There is no public folder-selection event. Remember the last sidebar
+	// notebook observed by selectedFolder() and only act when its id changes.
+	// The first value is primed at startup so the persisted Stream source is not
+	// overwritten merely because Joplin restored a notebook from last session.
+	private observedFolderId = '';
+	private folderWatchRunning = false;
+
 	// Set when something changed while the panel was hidden, so it can be
 	// brought up to date the moment it becomes visible again.
 	private stale = false;
@@ -185,14 +198,61 @@ export class StreamPanel {
 
 		await joplin.views.panels.onMessage(this.handle, (message: PanelMessage) => this.onMessage(message));
 
+		// Preserve the saved Stream source at startup. From this point on, a real
+		// change in Joplin's sidebar notebook is what drives source synchronisation.
+		await this.rememberSelectedFolder();
+
 		// Rendered unconditionally: at startup the panel may not have been added
 		// to the app layout yet, and a visibility check would wrongly report it
 		// as hidden and leave it blank.
 		await this.renderNow();
 
 		setInterval(() => {
+			this.checkSelectedFolder().catch(logError('the selected notebook check failed'));
+		}, FOLDER_WATCH_INTERVAL_MS);
+
+		setInterval(() => {
 			this.checkBookmarkedMembership().catch(logError('the bookmark membership check failed'));
 		}, BOOKMARK_WATCH_INTERVAL_MS);
+	}
+
+	private async rememberSelectedFolder(): Promise<void> {
+		const folder = await joplin.workspace.selectedFolder();
+		this.observedFolderId = `${folder?.id ?? ''}`;
+	}
+
+	/**
+	 * Mirrors a real Joplin sidebar notebook change into the Stream source.
+	 * selectedFolder() returns the last notebook while a tag or search is open,
+	 * so comparing ids is important: merely selecting another note must not pull
+	 * an All notebooks or Bookmarked Stream back to that last notebook.
+	 */
+	public async checkSelectedFolder(): Promise<void> {
+		if (this.folderWatchRunning) return;
+		if (!await joplin.views.panels.visible(this.handle)) return;
+
+		this.folderWatchRunning = true;
+		try {
+			const folder = await joplin.workspace.selectedFolder();
+			const folderId = `${folder?.id ?? ''}`;
+			if (!folderId || folderId === this.observedFolderId) return;
+
+			this.observedFolderId = folderId;
+
+			// selectedFolder() should name a real notebook, but keep the webview
+			// boundary and Joplin state defensive rather than storing an unknown id.
+			const folders = await getNotebookPaths();
+			if (!folders.some(candidate => candidate.id === folderId)) return;
+
+			const { sourceId } = await getSettings();
+			if (sourceId === folderId) return;
+
+			await setSourceId(folderId);
+			this.loadedPages = 1;
+			await this.render();
+		} finally {
+			this.folderWatchRunning = false;
+		}
 	}
 
 	/**
@@ -221,6 +281,7 @@ export class StreamPanel {
 
 	public async show(): Promise<void> {
 		await joplin.views.panels.show(this.handle);
+		await this.checkSelectedFolder();
 		if (this.stale) await this.renderNow();
 	}
 
@@ -424,10 +485,26 @@ export class StreamPanel {
 
 	private async selectSource(sourceId: string): Promise<void> {
 		const folders = await getNotebookPaths();
-		if (sourceId !== ALL_FOLDERS && sourceId !== BOOKMARKED_SOURCE && !folders.some(folder => folder.id === sourceId)) return;
+		const folder = folders.find(candidate => candidate.id === sourceId);
+		if (sourceId !== ALL_FOLDERS && sourceId !== BOOKMARKED_SOURCE && !folder) return;
 
 		await setSourceId(sourceId);
 		this.loadedPages = 1;
+
+		// All notebooks and Bookmarked have no single notebook to select in
+		// Joplin's sidebar. For a concrete notebook, use Joplin's openFolder
+		// command so the normal sidebar selection follows the Stream selector.
+		// Keep Stream selection working even if a future Joplin version removes or
+		// changes that internal desktop command.
+		if (folder) {
+			try {
+				await joplin.commands.execute('openFolder', folder.id);
+				this.observedFolderId = folder.id;
+			} catch (error) {
+				logError('could not select the notebook in Joplin')(error);
+			}
+		}
+
 		await this.renderNow();
 	}
 

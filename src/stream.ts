@@ -3,6 +3,7 @@ export interface Folder {
 	id: string;
 	title: string;
 	parent_id: string;
+	children?: Folder[];
 }
 
 export interface Tag {
@@ -44,9 +45,10 @@ const PAGE_LIMIT = 100;
 const MAX_PAGES = 500;
 
 /**
- * The data API returns at most `limit` items per call, so every listing has to
- * be paged through. Reading only the first page silently hides notebooks and
- * notes once a collection grows past 100 items.
+ * Most collection listings return at most `limit` items per call, so they have
+ * to be paged through. Reading only the first page silently hides tags and
+ * notes once a collection grows past 100 items. `GET /folders` is the special
+ * case: Joplin returns the entire notebook hierarchy as a tree instead.
  */
 const getAll = async <T>(path: string[], query: Record<string, unknown> = {}): Promise<T[]> => {
 	const items: T[] = [];
@@ -69,7 +71,43 @@ export interface NotebookPath {
 	path: string;
 }
 
-const getFolders = () => getAll<Folder>(['folders'], { fields: ['id', 'title', 'parent_id'] });
+const flattenFolderTree = (roots: Folder[]): Folder[] => {
+	const folders: Folder[] = [];
+	const visited = new Set<string>();
+
+	const visit = (folder: Folder, parentId = '') => {
+		if (!folder?.id || visited.has(folder.id)) return;
+		visited.add(folder.id);
+
+		// Joplin normally provides parent_id as a folder field. Supplying the
+		// tree parent as a fallback keeps the hierarchy intact even if a future
+		// response omits parent_id from child objects.
+		const normalized = { ...folder, parent_id: folder.parent_id || parentId };
+		folders.push(normalized);
+
+		for (const child of folder.children ?? []) visit(child, folder.id);
+	};
+
+	for (const root of roots) visit(root);
+
+	return folders;
+};
+
+/**
+ * Unlike the other collection endpoints, Joplin returns notebooks as a tree
+ * whose sub-notebooks live under `children`. Flatten it before the rest of the
+ * Stream code builds paths or merges every notebook into All notebooks.
+ *
+ * The `response.items` fallback keeps this compatible with a flat/paginated
+ * response shape as well; in that form parent_id already carries the hierarchy.
+ */
+const getFolders = async (): Promise<Folder[]> => {
+	const response = await joplin.data.get(['folders']);
+	const roots: Folder[] = Array.isArray(response) ? response : response?.items ?? [];
+
+	return flattenFolderTree(roots);
+};
+
 const getTags = () => getAll<Tag>(['tags'], { fields: ['id', 'title'] });
 
 /** Finds an existing Joplin tag by title without creating data while rendering. */
