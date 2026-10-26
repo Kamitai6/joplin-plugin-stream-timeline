@@ -1,6 +1,6 @@
 {
   "name": "joplin-plugin-stream-timeline",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "A Joplin plugin that streams notes from one or more notebooks into a continuous timeline.",
   "scripts": {
     "dist": "webpack --env joplin-plugin-config=buildMain && webpack --env joplin-plugin-config=buildExtraScripts && webpack --env joplin-plugin-config=createArchive",

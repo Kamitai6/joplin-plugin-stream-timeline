@@ -19,6 +19,8 @@ Unlike the original Journal Timeline plugin, notes do **not** need date-formatte
 - Adds a bookmark button to each entry. Bookmarking uses a normal Joplin tag named `Bookmarked`, so the bookmark state remains part of your Joplin data and syncs normally.
 - Reflects bookmark membership changes automatically while the Bookmarked source is visible, using a lightweight ID-only check.
 - Keeps the timeline current when notes change, are deleted, or finish syncing without resetting the reader to the top.
+- Supports nested notebooks and shows individual sources with their full path, such as `Projects/Mouse`.
+- Keeps an individual notebook source in sync with Joplin's selected notebook: selecting a notebook in Joplin updates the stream, and choosing an individual notebook in the stream selects it in Joplin.
 
 ## Requirements
 
@@ -75,7 +77,7 @@ The panel appears the first time the plugin runs and afterwards remembers whethe
 
 | Action | Where |
 | --- | --- |
-| Choose the stream source | Source selector at the top-left of the panel |
+| Choose the stream source | Source selector at the top-left of the panel, or select a notebook in Joplin's sidebar |
 | Show or hide the panel | Toolbar button, _Tools → Stream Timeline_, or `Ctrl/Cmd+Alt+J` |
 | Open a note in the editor | Click anywhere in its entry |
 | Bookmark or unbookmark a note | Bookmark button at the right side of the entry header |
@@ -93,7 +95,15 @@ Merges notes from every notebook and orders the combined result by `user_created
 
 ### Individual notebook
 
-Shows only notes from the selected notebook.
+Shows only notes from the selected notebook. Nested notebooks are supported and are labeled by their full path, for example `Projects/Mouse`. Selecting a parent notebook does not recursively include notes from its child notebooks; each notebook remains an independent source.
+
+When an individual notebook is selected in Joplin's sidebar, Stream Timeline follows that selection and updates both the source selector and the stream contents. Choosing an individual notebook from Stream Timeline performs the reverse synchronization and selects that notebook in Joplin. `All notebooks` and `Bookmarked` do not correspond to one notebook, so selecting either leaves Joplin's sidebar selection unchanged.
+
+#### Known Joplin API limitation
+
+Joplin currently does not expose a plugin event for notebook selection itself. Stream Timeline therefore reads the current selected notebook and also reacts to note-selection changes. If the stream is set to `All notebooks` or `Bookmarked` while Joplin already has a notebook selected, clicking that exact same already-selected notebook again may not be observable by the plugin because the selected notebook ID does not change. Normal switches between different notebooks are synchronized.
+
+This can be made exact if Joplin exposes a folder/notebook-selection event to plugins in the future.
 
 ### Bookmarked
 
@@ -121,7 +131,7 @@ Only the current page is rendered initially. Older entries are fetched and appen
 
 ## Credits
 
-Stream Timeline is a fork of [Journal Timeline](https://github.com/xFuture603/joplin-plugin-journal-timeline) by xFuture603. Version 1.5.1 changes the journal-specific reader into a general-purpose note stream while retaining the original project's foundation.
+Stream Timeline is a fork of [Journal Timeline](https://github.com/xFuture603/joplin-plugin-journal-timeline) by xFuture603. Version 1.5.1 changed the journal-specific reader into a general-purpose note stream while retaining the original project's foundation. Version 1.5.2 adds nested-notebook support and synchronization between individual Stream sources and Joplin's selected notebook.
 
 ## License
 

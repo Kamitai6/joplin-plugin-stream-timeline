@@ -67,6 +67,11 @@ joplin.plugins.register({
 			// Highlight whichever entry is now open in the editor.
 			panel.syncSelection().catch(error => console.error('Stream Timeline: could not update the selection', error));
 
+			// A notebook click normally changes the selected note too, so this gives
+			// sidebar-to-Stream synchronisation an immediate path. Empty notebooks are
+			// covered by the lightweight selectedFolder() watcher in StreamPanel.
+			panel.checkSelectedFolder().catch(error => console.error('Stream Timeline: could not update the source from Joplin notebook selection', error));
+
 			// Deleting the selected note changes the selection after the note has already
 			// disappeared from Joplin's note list. onNoteChange() is not guaranteed to
 			// reach this plugin for that deleted note, so rebuild the stream here too.

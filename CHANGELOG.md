@@ -1,5 +1,21 @@
 # Changelog
 
+# 1.5.2 (2026-10-26)
+
+### Features
+
+- Support nested Joplin notebooks in the source list, using full paths such as `Parent/Child`.
+- Synchronize individual notebook sources with Joplin's selected notebook in both directions. Selecting a notebook in Joplin updates the Stream source and contents; selecting an individual notebook in Stream Timeline selects the same notebook in Joplin.
+- Keep `All notebooks` and `Bookmarked` as Stream-only sources without forcing a Joplin sidebar selection.
+
+### Bug Fixes
+
+- Read Joplin's folder tree recursively so child notebooks are included in individual sources and `All notebooks`.
+
+### Known limitations
+
+- Joplin does not currently expose a plugin event for notebook selection. If Stream Timeline is showing `All notebooks` or `Bookmarked`, re-clicking the exact notebook that is already selected in Joplin may not be detectable because the selected notebook ID does not change. This can be completed when Joplin exposes a folder/notebook-selection event to plugins.
+
 # 1.5.1 (2026-10-25)
 
 ### Features
